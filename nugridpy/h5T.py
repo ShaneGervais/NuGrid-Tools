@@ -1167,7 +1167,9 @@ class h5File(threading.Thread):
         self.cycle=[str(k).replace('cycle','').replace('-','') for k in temp if 'cyc' in k]
         try:
             self.age=[float(self.h5[str(asd)].attrs.get("age",None)) for asd in temp if 'cyc' in asd]
-        except ValueError:
+        except (ValueError, TypeError):
+            # TypeError: modern numpy no longer implicitly converts a
+            # length-1 array via float(), only a true 0-d/scalar.
             self.age=[self.h5[str(asd)].attrs.get("age",None)[0] for asd in temp if 'cyc' in asd]
 
 # Old code that was getting cycles and ages is commented here below;
@@ -1333,7 +1335,7 @@ class h5File(threading.Thread):
         else:
             try:
                 self.age=[float(self.h5[str(asd)].attrs.get("age",None)) for asd in temp if 'cyc' in asd]
-            except ValueError:
+            except (ValueError, TypeError):
                 self.age=[self.h5[str(asd)].attrs.get("age",None)[0] for asd in temp if 'cyc' in asd]
 
         others=[]

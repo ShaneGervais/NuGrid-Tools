@@ -698,12 +698,12 @@ class PlotCommon(object):
         pT=self._classTest()
 
         # Class-specific things:
-        if pT is 'mesa_profile':
+        if pT == 'mesa_profile':
             x = self.get(ixaxis)
-            if ixaxis is 'radius':
+            if ixaxis == 'radius':
                 x = x*ast.rsun_cm
             y = self.get('logRho')
-        elif pT is 'se':
+        elif pT == 'se':
             if fname is None:
                 raise IOError("Please provide the cycle number fname")
             x = self.se.get(fname,ixaxis)
@@ -713,7 +713,7 @@ class PlotCommon(object):
                           for this class")
 
         # Plot-specific things:
-        if ixaxis is 'radius':
+        if ixaxis == 'radius':
             x = np.log10(x)
             xlab='$\log_{10}(r\,/\,{\\rm cm})$'
         else:
@@ -767,9 +767,9 @@ class PlotCommon(object):
 
         pT=self._classTest()
         # Class-specific things:
-        if pT is 'mesa_profile':
+        if pT == 'mesa_profile':
             x = self.get(ixaxis)
-            if ixaxis is 'radius':
+            if ixaxis == 'radius':
                 x = x*ast.rsun_cm
             if isos is None:
                 isos=['h1','he4','c12','c13','n14','o16','ne20','ne22','mg24','mg25',
@@ -778,7 +778,7 @@ class PlotCommon(object):
             risos=[i for i in isos if i in self.cols]
             abunds = [self.get(riso) for riso in risos]
             names=risos
-        elif pT is 'se':
+        elif pT == 'se':
             if fname is None:
                 raise IOError("Please provide the cycle number fname")
             x = self.se.get(fname,ixaxis)
@@ -794,10 +794,10 @@ class PlotCommon(object):
                           for this class")
 
         # Plot-specific things:
-        if ixaxis is 'logradius':
+        if ixaxis == 'logradius':
             x = np.log10(x)
             xlab='$\log_{10}(r\,/\,{\\rm cm})$'
-        elif ixaxis is 'radius':
+        elif ixaxis == 'radius':
             x = old_div(x, 1.e8)
             xlab = 'r / Mm'
         else:
@@ -851,12 +851,12 @@ class PlotCommon(object):
         pT=self._classTest()
 
         # Class-specific things:
-        if pT is 'mesa_profile':
+        if pT == 'mesa_profile':
             x = self.get(ixaxis)
-            if ixaxis is 'radius':
+            if ixaxis == 'radius':
                 x = x*ast.rsun_cm
             y = self.get('ye')
-        elif pt is 'se':
+        elif pT == 'se':
             if fname is None:
                 raise IOError("Please provide the cycle number fname")
             raise IOError("Sorry, Ye profile is not yet available for\
@@ -868,7 +868,7 @@ class PlotCommon(object):
                           for this class")
 
         # Plot-specific things:
-        if ixaxis is 'radius':
+        if ixaxis == 'radius':
             x = np.log10(x)
             xlab='$\log_{10}(r\,/\,{\\rm cm})$'
         else:

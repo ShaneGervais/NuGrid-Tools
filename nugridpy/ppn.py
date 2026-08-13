@@ -252,7 +252,7 @@ class xtime(NuPlotMixin):
         <http://matplotlib.sourceforge.net/api/pyplot_api.html#matplotlib.pyplot.plot>
 
         '''
-        if label is 'default':
+        if label == 'default':
             lab_str=y
         else:
             lab_str=label
@@ -397,8 +397,8 @@ class abu_vector(NuPlotMixin, Utils):
             for file in f:
             # Removes any files that are not ppn files
                 if filenames in file and 'ppn' in file and '~' not in file \
-                and '#' not in file and  file[-1] is 'n' \
-                and file[-2] is 'p' and file[-3] is 'p'\
+                and '#' not in file and  file[-1] == 'n' \
+                and file[-2] == 'p' and file[-3] == 'p'\
                 and 'restart' not in file:
                     self.files.append(file)
             self.files.sort()

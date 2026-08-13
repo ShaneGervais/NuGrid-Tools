@@ -1926,7 +1926,12 @@ class NuPlotMixin(PlotCommon):
             nzmax = int(max(coord_y_1_small+coord_y_2_small+coord_y_3_small))+1
             nnmax = int(max(coord_x_1_small+coord_x_2_small+coord_x_3_small))+1
 
-        nzycheck = zeros([nnmax_plot,nzmax,3])
+        # nnmax (just recomputed above from the flux file's own
+        # coordinates), not nnmax_plot (the *abundance* panel's N
+        # extent, set once near the top of this method) -- every index
+        # used into this array below comes from the flux data, so it
+        # must be sized to that, not to a smaller, unrelated bound.
+        nzycheck = zeros([nnmax,nzmax,3])
         coord_x_out = zeros(len(coord_x_2_small), dtype='int')
         coord_y_out = zeros(len(coord_y_2_small),dtype='int')
         for i in range(len(flux_log10_small)):
@@ -2026,8 +2031,12 @@ class NuPlotMixin(PlotCommon):
         iarr = 0
 
         # plot element labels
+        # nzmax_plot, not nzmax: nzycheck_plot was sized from the
+        # *abundance* panel's Z extent (nzmax_plot, saved earlier);
+        # nzmax has since been reassigned to the *flux* panel's own
+        # (generally different, often larger) Z extent above.
         if flux_ilabel:
-            for z in range(nzmax):
+            for z in range(nzmax_plot):
                 try:
                     nmin = argwhere(nzycheck_plot[:,z,iarr]).min()-1
                     nmax = argwhere(nzycheck_plot[:,z,iarr]).max()+1
@@ -2038,7 +2047,7 @@ class NuPlotMixin(PlotCommon):
 
         # plot mass numbers
         if flux_imlabel:
-            for z in range(nzmax):
+            for z in range(nzmax_plot):
                 for n in range(nnmax_plot):
                     a = z+n
                     if nzycheck_plot[n,z,iarr]==1:
@@ -2704,7 +2713,7 @@ class NuPlotMixin(PlotCommon):
             print("isom               isomers and their abundance")
 
             self.get(cycle,decayed=decayed)
-            if ref is not -1:
+            if ref != -1:
                 if type(ref) is list: # reference cycle from other run
                     import ppn
                     pp=ppn.abu_vector(ref[0])
@@ -2891,7 +2900,7 @@ class NuPlotMixin(PlotCommon):
             dylim=0.05*(ylim2-ylim1)
             ylim1 = ylim1 -dylim
             ylim2 = ylim2 +dylim
-            if ref is not -1:
+            if ref != -1:
                 ylim2 = min([ylim2,4])
                 ylim1 = max([ylim1,-4])
             else:
@@ -2927,7 +2936,7 @@ class NuPlotMixin(PlotCommon):
             pl.ylim(ylim[0],ylim[1])
         pl.xlim([amass_range[0]-.5,amass_range[1]+.5])
         pl.xlabel('mass number (A)')
-        if ref is not -1:
+        if ref != -1:
             if log_logic:
                 pl.ylabel(r'log abundance ratio')
             else:
@@ -2988,7 +2997,13 @@ class NuPlotMixin(PlotCommon):
                 iii = iii+1
 
         if delta_labelsx == 5:
-            xticks = arange(amass_range[0],amass_range[1],1)
+            # +1: labelsx has one entry per integer from amass_range[0]
+            # to amass_range[1] *inclusive* (an initial append plus one
+            # per loop iteration below); arange's stop is exclusive, so
+            # matching that range needs amass_range[1]+1, not
+            # amass_range[1] (which undercounts xticks by one and made
+            # this crash with a FixedLocator/labels length mismatch).
+            xticks = arange(amass_range[0],amass_range[1]+1,1)
             pl.xticks(xticks,labelsx)
         else:
             pl.xticks()
@@ -3367,10 +3382,10 @@ class NuPlotMixin(PlotCommon):
                 if ref_filename=='':
                     raise IOError('You chose to plot relative to the solar abundance dist. However, you did not supply the solar abundance file!')
                 else:
-                    nuutils.solar(ref_filename,1)
-                    menow = where(unique(nuutils.z_sol)==44.)[0][0]
-                    print(1, menow, nuutils.solar_elem_abund[menow])
-                    el_abu_sun=np.array(nuutils.solar_elem_abund)
+                    utils.solar(ref_filename,1)
+                    menow = where(unique(utils.z_sol)==44.)[0][0]
+                    print(1, menow, utils.solar_elem_abund[menow])
+                    el_abu_sun=np.array(utils.solar_elem_abund)
                     print(2, el_abu_sun)
                     print(3, el_abu_sun[42])
                     el_abu_plot=np.zeros(len(el_abu))
@@ -3675,7 +3690,7 @@ class NuPlotMixin(PlotCommon):
                                                          blit=False)
                     self.fig.canvas.draw()
 
-                if self.movname is not '':
+                if self.movname != '':
                     print('\n generating animation: '+self.movname)
                     self.ani.save(self.movname,fps=self.fps)
                     print('animation '+self.movname+' saved with '+str(self.fps)+' frames per second')

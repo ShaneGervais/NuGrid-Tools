@@ -612,7 +612,7 @@ class MesaPlotMixin(PlotCommon):
         pyl.plot(xaxisarray[t0_model:]-t0_mod,COratio[t0_model:],'-k',label='CO ratio')
         pyl.ylabel('C/O ratio')
         pyl.legend(loc=4)
-        if ylim_CO[0] is not 0 and  ylim_CO[1] is not 0:
+        if ylim_CO[0] != 0 and  ylim_CO[1] != 0:
             pyl.ylim(ylim_CO)
         if xax == 'time':
             pyl.xlabel('t / yrs')
@@ -2892,10 +2892,10 @@ def abu_profiles(p,ifig=1,xlm=xlm,ylm=(-8,0),show=False,abunds='All',xaxis=xaxis
     else:
         abus = abus    
     ax = [ax1,ax2,ax3,ax4]
-    xxx = p.get('radius') if xaxis is "Eulerian" else p.get('mass') 
+    xxx = p.get('radius') if xaxis == "Eulerian" else p.get('mass') 
     mass = p.get('mass')                      # in units of Msun
     radius = p.get('radius')*ast.rsun_cm/1.e8  # in units of Mm
-    if xaxis is "Eulerian":
+    if xaxis == "Eulerian":
         xxx = radius
 
         if xlm[0] == 0 and xlm[1] == 0:
@@ -2909,7 +2909,7 @@ def abu_profiles(p,ifig=1,xlm=xlm,ylm=(-8,0),show=False,abunds='All',xaxis=xaxis
         xll = (radius[indbot],radius[indtop])
         xxlabel = "Radius (Mm)"
    
-    elif xaxis is "Lagrangian": 
+    elif xaxis == "Lagrangian": 
         xxx = mass
         xll = xlm
         xxlabel = "$M / \mathrm{M_{sun}}$"
@@ -2964,7 +2964,7 @@ def other_profiles(p,ifig=1,xlm=xlm,show=False,xaxis=xaxis_type, figsize2=(10,8)
 
     mass = p.get('mass')                      # in units of Msun
     radius = p.get('radius')*ast.rsun_cm/1.e8  # in units of Mm
-    if xaxis is "Eulerian":
+    if xaxis == "Eulerian":
         xxx = radius
         if xlm[0]==0 and xlm[1] == 0:
             indtop = 0
@@ -2974,7 +2974,7 @@ def other_profiles(p,ifig=1,xlm=xlm,show=False,xaxis=xaxis_type, figsize2=(10,8)
             indtop = np.where(radius<xlm[1])[0][0]
         xll = (radius[indbot],radius[indtop])
         xxlabel = "radius (Mm)"
-    elif xaxis is "Lagrangian": 
+    elif xaxis == "Lagrangian": 
         xxx = mass
         xll = xlm
         xxlabel = "$M / \mathrm{M_{sun}}$"

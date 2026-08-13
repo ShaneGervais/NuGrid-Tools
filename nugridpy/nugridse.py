@@ -122,6 +122,8 @@ from builtins import str
 from builtins import range
 from past.utils import old_div
 
+from numpy import *
+from math import *
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as pl

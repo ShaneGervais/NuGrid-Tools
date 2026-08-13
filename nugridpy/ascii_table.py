@@ -474,10 +474,19 @@ def write(filename, headers, dcols, data, headerlines=[],
     headers=tmp
     tmp=''
 
+    def _format_value(value):
+        # data_fmt is a single numeric format applied to every column;
+        # fall back to str() for a column that turns out to hold
+        # non-numeric data rather than crashing the whole write.
+        try:
+            return data_fmt.format(value)
+        except (ValueError, TypeError):
+            return str(value)
+
     for i in range(icols): # Determine length of each columnn
         length=len(dcols[i])
-        for j in range(len(data[i])): 
-            tmp1=data_fmt.format(data[i][j])
+        for j in range(len(data[i])):
+            tmp1=_format_value(data[i][j])
             if len(tmp1)>length:
                 length=len(tmp1)
         lengthList.append(length)
@@ -503,7 +512,7 @@ def write(filename, headers, dcols, data, headerlines=[],
 
     for i in range(len(data[0])):
         for j in range(len(data)):
-            tmp1=data_fmt.format(data[j][i])
+            tmp1=_format_value(data[j][i])
             if len(tmp1) < lengthList[j]:
                 l=lengthList[j]-len(tmp1)
                 for k in range(l):

@@ -4,6 +4,7 @@ from builtins import range
 import matplotlib
 matplotlib.use('agg')
 import unittest
+import os
 import numpy as np
 
 from .tempdir.tempfile_ import TemporaryDirectory
@@ -167,6 +168,31 @@ class TestNewAbundanceCharts(unittest.TestCase):
                 p.flux_solo(0, show=False)
                 self.mpy.figure()
                 p.abu_flux_chart(0, show=False, threshold=-5, imagic=True)
+            finally:
+                os.chdir(cwd)
+
+    def test_abu_flux_chart_flux_extent_beyond_abundance_network(self):
+        # Regression test: the flux panel's own (N,Z) extent is
+        # computed separately from, and can be larger than, the
+        # abundance panel's -- a flux row referencing a nuclide outside
+        # the loaded isotope network's own N/Z range (e.g. a late
+        # cycle's flux file touching nuclides the abundance side never
+        # sees) used to crash with an IndexError from sizing the flux
+        # array to the smaller, abundance-derived bound.
+        p = _FakeAbuVector({0: _synthetic_cycle()})
+        with TemporaryDirectory() as tdir:
+            import os
+            cwd = os.getcwd()
+            os.chdir(tdir)
+            try:
+                with open('flux_00000.DAT', 'w') as f:
+                    f.write("header line\n")
+                    f.write("1 1 1 0 0 1 2 1 1 1.0e-3 1.0e-4\n")
+                    # Z_k5=15, A_k5=30: far outside this synthetic
+                    # network's own Z/N range (max Z=8, max N=8).
+                    f.write("2 1 1 0 0 15 30 1 1 1.0e-3 1.0e-4\n")
+                self.mpy.figure()
+                p.abu_flux_chart(0, show=False)
             finally:
                 os.chdir(cwd)
 
@@ -384,6 +410,68 @@ class TestSensitivity(unittest.TestCase):
         ranked = sensitivity.rank_reactions(table, 'He-4')
         self.assertEqual(ranked[0][0], 'rxn_big')
         self.assertGreater(ranked[0][1], ranked[1][1])
+
+
+class TestRealSeData(unittest.TestCase):
+    '''
+    Exercises nugridse.se against the real se.h5 files bundled in
+    tests/data/ (a 3 Msun, Z=0.02 AGB model, 300 real cycles) --
+    in-repo, portable, no absolute paths or network fetch needed.
+
+    This is the regression net for three real bugs a debugging pass
+    against this data found and fixed: two h5T.py float()-on-a-
+    length-1-array crashes in the HDF5 age-attribute reader (blocked
+    loading entirely), a missing `from numpy import *` in nugridse.py
+    (a real regression from the Phase 1 data_plot.py split -- it used
+    to get numpy names transitively through `from .data_plot import
+    *`, which this refactor replaced with targeted imports), and an
+    off-by-one between `xticks`/`labelsx` in iso_abund that only
+    triggers when the isotope mass range span is <=100 (this bundled
+    model's reduced isotope set hits that branch; the wider PPN
+    baseline data used elsewhere doesn't).
+    '''
+
+    DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'tests', 'data')
+
+    def setUp(self):
+        import matplotlib.pylab as mpy
+        self.mpy = mpy
+
+    def test_load_real_se_data(self):
+        from nugridpy import nugridse
+        s = nugridse.se(self.DATA_DIR)
+        self.assertEqual(len(s.se.cycles), 300)
+
+    def test_iso_abund_on_real_data(self):
+        # exercises the xticks/labelsx off-by-one (mass range span <=100
+        # here) and nugridse.py's bare array/zeros/where usage
+        from nugridpy import nugridse
+        s = nugridse.se(self.DATA_DIR)
+        self.mpy.figure()
+        s.iso_abund(3, stable=True, show=False)
+
+    def test_plotprofMulti_on_real_data(self):
+        from nugridpy import nugridse
+        s = nugridse.se(self.DATA_DIR)
+        with TemporaryDirectory() as tdir:
+            cwd = os.getcwd()
+            os.chdir(tdir)
+            try:
+                s.plotprofMulti(1, 3, 2, ['H-1', 'He-4'], 0, 3, -6, 0)
+            finally:
+                os.chdir(cwd)
+
+    def test_movie_abu_chart_and_iso_abund_on_real_data(self):
+        from nugridpy import nugridse
+        s = nugridse.se(self.DATA_DIR)
+        with TemporaryDirectory() as tdir:
+            cwd = os.getcwd()
+            os.chdir(tdir)
+            try:
+                s.movie([1, 3], plotstyle='abu_chart')
+                s.movie([1, 3], plotstyle='iso_abund')
+            finally:
+                os.chdir(cwd)
 
 
 class TestAbuChart(unittest.TestCase):

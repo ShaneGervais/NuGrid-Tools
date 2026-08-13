@@ -7,3 +7,4 @@ doc/build
 build/
 dist/
 *.egg-info/
+h5Preproc.txt

@@ -353,12 +353,12 @@ class mesa_profile(PlotCommon):
                 self.sldir=mod_dir+'/LOGS'
                 sldir = mod_dir+'/LOGS'
 
-        if give_filename is not None and num_type is not 'explicit':
+        if give_filename is not None and num_type != 'explicit':
             raise KeyError("Exact filename given but num_type is not explicit.")
 
-        if num_type is 'nearest_model' or num_type is 'model':
+        if num_type == 'nearest_model' or num_type == 'model':
             self._profiles_index()
-        if num_type is 'nearest_model':
+        if num_type == 'nearest_model':
             amods=array(self.model)
             if amods[0]>num:
                  num = amods[0]  
@@ -374,27 +374,27 @@ class mesa_profile(PlotCommon):
                  num = self.model[sometable[nearest]]
             print('Found and load nearest profile for cycle '+str(num))
             num_type = 'model'
-        if num_type is 'model':
+        if num_type == 'model':
             try:
                 log_num=self.log_ind[num]
             except KeyError:
                 print('There is no profile file for this model')
                 print("You may retry with num_type='nearest_model'")
                 return
-        elif num_type is 'profiles_i':
+        elif num_type == 'profiles_i':
             log_num=self._log_file_ind(num)
             if log_num == -1:
                 print("Could not find a profile file with that number")
                 return
-        elif num_type is 'profile_num':
+        elif num_type == 'profile_num':
             log_num = num
-        elif num_type is 'explicit':
+        elif num_type == 'explicit':
             pass
         else:
             print('unknown num_type')
             return
 
-        if num_type is 'explicit':
+        if num_type == 'explicit':
             filename = sldir+'/'+give_filename
             if not os.path.exists(filename):
                 print('error: file '+give_filename+' not found in '+sldir)
@@ -980,7 +980,7 @@ def _read_mesafile(filename,data_rows=0,only='all'):
            header_attr[a] = float(b)  # Convert to float
 
 
-    if only is 'header_attr':
+    if only == 'header_attr':
         return header_attr
 
     cols    = {}
