@@ -138,7 +138,8 @@ import time
 import glob
 
 from .utils import *
-from .data_plot import *
+from .plot_common import PlotCommon
+from .nu_plots.plotting import NuPlotMixin
 from . import h5T
 
 
@@ -165,7 +166,7 @@ def set_nice_params():
     'text.usetex':       False}
     pl.rcParams.update(params)
 
-class se(DataPlot, Utils):
+class se(NuPlotMixin, Utils):
     """
     This class provides easy access to h5 files from the NuGrid project,
     along with some standard plots.
@@ -482,7 +483,7 @@ class se(DataPlot, Utils):
             The default is None.
 
         """
-        DataPlot.plot_prof_1(self,species,mod,xlim1,xlim2,ylim1,ylim2,symbol)
+        PlotCommon.plot_prof_1(self,species,mod,xlim1,xlim2,ylim1,ylim2,symbol)
         """
         tot_mass=self.se.get(mod,'total_mass')
         age=self.se.get(mod,'age')

@@ -57,13 +57,14 @@ import matplotlib
 from matplotlib.pylab import *
 import os
 
-from .data_plot import *
+from .plot_common import PlotCommon
+from .nu_plots.plotting import NuPlotMixin
 from .utils import *
 from . import utils
 
 #import pdb
 
-class xtime(DataPlot):
+class xtime(NuPlotMixin):
     '''
     read and plot x-time.dat output files.
 
@@ -213,7 +214,7 @@ class xtime(DataPlot):
         make a simple plot of two columns against each other.
 
         An example would be instance.plot_xtime('PB206', label='PB206 vs t_y'
-        Recomend using the plot function DataPlot.plot() it has more
+        Recomend using the plot function PlotCommon.plot() it has more
         functionality.
 
         Parameters
@@ -258,7 +259,7 @@ class xtime(DataPlot):
         except KeyError:
             x='age'
 
-        DataPlot.plot(self,x,y,legend=lab_str,labelx=labelx, labely=labely,
+        PlotCommon.plot(self,x,y,legend=lab_str,labelx=labelx, labely=labely,
                       title=title, shape=shape,logx=logx, logy=logy, base=base)
         '''
         print X,Y
@@ -272,7 +273,7 @@ class xtime(DataPlot):
         legend()
         '''
 
-class abu_vector(DataPlot, Utils):
+class abu_vector(NuPlotMixin, Utils):
     '''
     Class for reading selem00xxxx.DAT files
 

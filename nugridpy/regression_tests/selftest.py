@@ -18,6 +18,15 @@ class TestModuleImports(unittest.TestCase):
     def test_import_data_plot(self):
         import nugridpy.data_plot
 
+    def test_import_plot_common(self):
+        import nugridpy.plot_common
+
+    def test_import_nu_plots(self):
+        import nugridpy.nu_plots.plotting
+
+    def test_import_mesa_plots(self):
+        import nugridpy.mesa_plots.plotting
+
     def test_import_grain(self):
         import nugridpy.grain
 
@@ -35,6 +44,29 @@ class TestModuleImports(unittest.TestCase):
 
     def test_import_utils(self):
         import nugridpy.utils
+
+class TestPlotMixinComposition(unittest.TestCase):
+
+    def test_data_plot_shim_aliases_plot_common(self):
+        from nugridpy import data_plot, plot_common
+        self.assertIs(data_plot.DataPlot, plot_common.PlotCommon)
+
+    def test_nu_plots_classes_inherit_nu_plot_mixin(self):
+        from nugridpy import ppn, nugridse
+        from nugridpy.nu_plots.plotting import NuPlotMixin
+        self.assertTrue(issubclass(ppn.xtime, NuPlotMixin))
+        self.assertTrue(issubclass(ppn.abu_vector, NuPlotMixin))
+        self.assertTrue(issubclass(nugridse.se, NuPlotMixin))
+
+    def test_mesa_classes_inherit_expected_mixins(self):
+        from nugridpy import mesa
+        from nugridpy.plot_common import PlotCommon
+        from nugridpy.mesa_plots.plotting import MesaPlotMixin
+        self.assertTrue(issubclass(mesa.mesa_profile, PlotCommon))
+        self.assertFalse(issubclass(mesa.mesa_profile, MesaPlotMixin))
+        self.assertTrue(issubclass(mesa.history_data, MesaPlotMixin))
+        self.assertTrue(issubclass(mesa.star_log, MesaPlotMixin))
+
 
 class TestAbuChart(unittest.TestCase):
 
