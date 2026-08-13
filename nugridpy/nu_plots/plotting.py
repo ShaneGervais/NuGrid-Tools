@@ -153,7 +153,7 @@ class NuPlotMixin(PlotCommon):
             Give path and filename here, if you want to save the figure.
         '''
 
-        from . import utils as u
+        from .. import utils as u
 
         ### WORK ON PATH ###
         # define svn path form path where script runs, depending on standard input or not
@@ -700,7 +700,7 @@ class NuPlotMixin(PlotCommon):
             Show plot?
         '''
 
-        from . import utils as u
+        from .. import utils as u
 
         ### WORK ON PATH ###
         # define svn path form path where script runs, depending on standard input or not
@@ -901,11 +901,130 @@ class NuPlotMixin(PlotCommon):
         if plt_show:
             pl.show()
 
+    def _draw_stable_boxes(self, ax, lw=3.):
+        '''
+        Draw black, unfilled boxes around every stable isotope on an
+        (N,Z) grid axes -- the "line of stability" highlight shared by
+        abu_chart, abu_flux_chart, abu_ratio_chart, and
+        abu_evolution_classify. Extracted from what used to be four
+        near-identical copies of this loop.
+        '''
+        for i in range(len(self.stable_el)):
+            if i == 0:
+                continue
+            tmp = self.stable_el[i]
+            try:
+                zz = self.elements_names.index(tmp[0]) #charge
+            except:
+                continue
+            for j in range(len(tmp)):
+                if j == 0:
+                    continue
+                nn = int(tmp[j]) #atomic mass
+                nn = nn - zz
+                xy = nn-0.5, zz-0.5
+                rect = Rectangle(xy, 1, 1, ec='k', fc='None', fill='False', lw=lw)
+                rect.set_zorder(2)
+                ax.add_patch(rect)
+
+    def _draw_magic_lines(self, ax, grid, iarr=0):
+        '''
+        Draw red lines across an (N,Z) grid axes at the magic proton/
+        neutron numbers (2, 8, 20, 28, 50, 82, 126), spanning the
+        plotted extent at each magic number.
+
+        Parameters
+        ----------
+        grid : 3D array indexed [n, z, iarr]; grid[:,:,iarr] nonzero
+            marks a plotted (n, z) cell.
+        '''
+        # NOTE: uses `.min()`/`.max()` on the argwhere result directly,
+        # not the `min()`/`max()` builtins -- this module's `from numpy
+        # import *` shadows those builtins with numpy's reduction
+        # functions, which return a bare scalar (not indexable with
+        # `[0]`) given a single-row argwhere result. Calling `.min()`/
+        # `.max()` on the array sidesteps that ambiguity entirely.
+        nnmax, nzmax = grid.shape[0], grid.shape[1]
+        ixymagic = [2, 8, 20, 28, 50, 82, 126]
+        for magic in ixymagic:
+            if magic <= nzmax:
+                try:
+                    xnmin = argwhere(grid[:,magic,iarr]).min()
+                    xnmax = argwhere(grid[:,magic,iarr]).max()
+                    ax.plot([xnmin,xnmax],[magic,magic],lw=3.,color='r',ls='-')
+                except ValueError:
+                    pass
+            if magic <= nnmax:
+                try:
+                    yzmin = argwhere(grid[magic,:,iarr]).min()
+                    yzmax = argwhere(grid[magic,:,iarr]).max()
+                    ax.plot([magic,magic],[yzmin,yzmax],lw=3.,color='r',ls='-')
+                except ValueError:
+                    pass
+
+    def _abu_grid(self, cycle, mass_range=None):
+        '''
+        Fetch per-isotope (n, z) -> abundance data for a cycle, from
+        either an `se` (multi-zone, mass-range-averaged) or `PPN`
+        (single-zone) instance. This is the same data-fetching
+        `abu_chart`/`abu_flux_chart` do internally, factored out so
+        `abu_ratio_chart` and `abu_evolution_classify` don't duplicate
+        it a further time.
+
+        Returns a dict {(n, z): abundance} for isotopes in their
+        ground state (isom == 1), matching the filtering `abu_chart`
+        applies.
+        '''
+        plotType = self._classTest()
+        if plotType == 'se':
+            cycle = self.se.findCycle(cycle)
+            yin = self.get(cycle, 'iso_massf')
+            isom = self.se.isomeric_states
+            masses = self.se.get(cycle, 'mass')
+            zin = array([el for el in self.se.Z])
+            nin = array([el for el in self.se.A]) - zin
+            if masses[0] > masses[-1]:
+                yin = yin[::-1]
+                masses = masses[::-1]
+            if mass_range is not None:
+                masses = masses.copy()
+                masses.sort()
+                idxl = np.abs(masses-mass_range[0]).argmin()
+                if masses[idxl] < mass_range[0]:
+                    idxl += 1
+                idxu = np.abs(masses-mass_range[1]).argmin()
+                if masses[idxu] > mass_range[1]:
+                    idxu -= 1
+                yin = yin[idxl:idxu+1]
+            tmp2 = sum(yin, axis=0)
+            yin = old_div(tmp2, len(yin))
+        elif plotType == 'PPN':
+            ain = self.get('A', cycle)
+            zin = self.get('Z', cycle)
+            nin = ain-zin
+            yin = self.get('ABUNDANCE_MF', cycle)
+            isom = self.get('ISOM', cycle)
+            if mass_range is not None:
+                keep = [i for i in range(len(nin))
+                        if ain[i] >= mass_range[0] and ain[i] <= mass_range[1]]
+                nin = [nin[i] for i in keep]
+                zin = [zin[i] for i in keep]
+                yin = [yin[i] for i in keep]
+                isom = [isom[i] for i in keep]
+        else:
+            raise IOError("This method is not supported by this class")
+
+        grid = {}
+        for i in range(len(nin)):
+            if isom[i] == 1:
+                grid[(int(nin[i]), int(zin[i]))] = yin[i]
+        return grid
 
     def abu_chartMulti(self, cyclist, mass_range=None, ilabel=True,
                        imlabel=True, imlabel_fontsize=8, imagic=False,
                        boxstable=True, lbound=20, plotaxis=[0,0,0,0],
-                       color_map='jet', pdf=False, title=None, path=None):
+                       color_map='jet', single_colour=None, threshold=None,
+                       pdf=False, title=None, path=None):
         '''
         Method that plots abundence chart and saves those figures to a
         .png file (by default). Plots a figure for each cycle in the
@@ -942,6 +1061,15 @@ class NuPlotMixin(PlotCommon):
             Color map according to choices in matplotlib
             (e.g. www.scipy.org/Cookbook/Matplotlib/Show_colormaps).
             The default is 'jet'.
+        single_colour : matplotlib colour spec, optional
+            If given, every plotted isotope is filled with this flat
+            colour instead of being coloured by abundance (no colorbar
+            is drawn). The default is None (colormap-driven, as before).
+        threshold : float, optional
+            If given (log10 mass fraction), isotopes below it are not
+            drawn at all. Distinct from `lbound`, which only recolours
+            low abundances white but still draws the cell. The default
+            is None (draw everything present, as before).
         pdf : boolean, optional
             What format will this be saved in pdf/png.  The default is
             True.
@@ -956,8 +1084,9 @@ class NuPlotMixin(PlotCommon):
 
         max_num = max(cyclist)
         for i in range(len(cyclist)):
-            self.abu_chart( cyclist[i], mass_range ,ilabel,imlabel,imlabel_fontsize,imagic,\
-                            boxstable,lbound,plotaxis,False,color_map)
+            self.abu_chart(cyclist[i], mass_range, ilabel, imlabel, imlabel_fontsize, imagic,
+                            boxstable, lbound, plotaxis, False, color_map,
+                            single_colour=single_colour, threshold=threshold)
             if title !=None:
                 pl.title(title)
             else:
@@ -980,7 +1109,7 @@ class NuPlotMixin(PlotCommon):
                   plotaxis=[0, 0, 0, 0], show=True, color_map='jet',
                   ifig=None,data_provided=False,thedata=None,
                   savefig=False,drawfig=None,drawax=None,mov=False,
-                  path=None):
+                  path=None, single_colour=None, threshold=None):
         '''
         Plots an abundance chart
 
@@ -1034,6 +1163,15 @@ class NuPlotMixin(PlotCommon):
             being made (only True when se.movie is called, which sets mov to True
             automatically
         path: path where to save figure
+        single_colour : matplotlib colour spec, optional
+            If given, every plotted isotope is filled with this flat
+            colour instead of being coloured by abundance (no colorbar
+            is drawn). The default is None (colormap-driven, as before).
+        threshold : float, optional
+            If given (log10 mass fraction), isotopes below it are not
+            drawn at all. Distinct from `lbound`, which only recolours
+            low abundances white but still draws the cell. The default
+            is None (draw everything present, as before).
 
         '''
 
@@ -1042,7 +1180,8 @@ class NuPlotMixin(PlotCommon):
 
         if type(cycle)==type([]):
             self.abu_chartMulti(cycle, mass_range,ilabel,imlabel,imlabel_fontsize,imagic,boxstable,\
-                                lbound,plotaxis,color_map, path=path)
+                                lbound,plotaxis,color_map, path=path,
+                                single_colour=single_colour, threshold=threshold)
             return
         plotType=self._classTest()
 
@@ -1206,7 +1345,11 @@ class NuPlotMixin(PlotCommon):
 
         # color map choice for abundances
 
-        cmapa = cm.get_cmap(name=color_map)
+        try:
+            cmapa = matplotlib.colormaps[color_map]
+        except AttributeError:
+            # matplotlib < 3.7 fallback
+            cmapa = cm.get_cmap(name=color_map)
         # color map choice for arrows
         cmapr = cm.autumn
         # if a value is below the lower limit its set to white
@@ -1236,17 +1379,32 @@ class NuPlotMixin(PlotCommon):
         '''
         ## Colour bar plotted
 
+        # `nzycheck_display` drives everything drawn below (boxes, labels,
+        # magic lines) so a `threshold` cutoff hides an isotope everywhere
+        # consistently, not just its coloured cell.
+        nzycheck_display = nzycheck
+        if threshold is not None:
+            nzycheck_display = nzycheck.copy()
+            for i in range(nzmax):
+                for j in range(nnmax):
+                    if nzycheck_display[j,i,0]==1:
+                        yab = nzycheck_display[j,i,1]
+                        if yab == 0:
+                            yab = 1e-99
+                        if log10(yab) < threshold:
+                            nzycheck_display[j,i,0] = 0
+
         patches = []
         color = []
         for i in range(nzmax):
             for j in range(nnmax):
-                if nzycheck[j,i,0]==1:
+                if nzycheck_display[j,i,0]==1:
                     xy = j-0.5,i-0.5
 
                     rect = Rectangle(xy,1,1,)
 
                     # abundance
-                    yab = nzycheck[j,i,1]
+                    yab = nzycheck_display[j,i,1]
                     if yab == 0:
 
                         yab=1e-99
@@ -1257,15 +1415,18 @@ class NuPlotMixin(PlotCommon):
                     patches.append(rect)
                     color.append(col)
 
-        p = PatchCollection(patches, cmap=cmapa, norm=norma)
-        p.set_array(array(color))
+        if single_colour is not None:
+            p = PatchCollection(patches, facecolor=single_colour, edgecolor='k')
+        else:
+            p = PatchCollection(patches, cmap=cmapa, norm=norma)
+            p.set_array(array(color))
         p.set_zorder(1)
         if mov:
             artist1=ax.add_collection(p)
             artists.append(artist1)
         else:
             ax.add_collection(p)
-        if not mov:
+        if not mov and single_colour is None:
             cb = pl.colorbar(p)
 
             # colorbar label
@@ -1276,29 +1437,7 @@ class NuPlotMixin(PlotCommon):
 
         # Add black frames for stable isotopes
         if boxstable:
-            for i in range(len(self.stable_el)):
-                if i == 0:
-                    continue
-
-
-                tmp = self.stable_el[i]
-                try:
-                    zz= self.elements_names.index(tmp[0]) #charge
-                except:
-                    continue
-
-                for j in range(len(tmp)):
-                    if j == 0:
-                        continue
-
-                    nn = int(tmp[j]) #atomic mass
-                    nn=nn-zz
-
-                    xy = nn-0.5,zz-0.5
-                    rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=3.)
-                    rect.set_zorder(2)
-                    ax.add_patch(rect)
-
+            self._draw_stable_boxes(ax, lw=3.)
 
         # decide which array to take for label positions
         iarr = 0
@@ -1307,7 +1446,8 @@ class NuPlotMixin(PlotCommon):
         if ilabel:
             for z in range(nzmax):
                 try:
-                    nmin = min(argwhere(nzycheck[:,z,iarr]))[0]-1
+                    # .min(), not min(...)[0] -- see _draw_magic_lines note
+                    nmin = argwhere(nzycheck_display[:,z,iarr]).min()-1
                     ax.text(nmin,z,elname[z],horizontalalignment='center',verticalalignment='center',\
                             fontsize='x-small',clip_on=True)
                 except ValueError:
@@ -1318,29 +1458,13 @@ class NuPlotMixin(PlotCommon):
             for z in range(nzmax):
                 for n in range(nnmax):
                     a = z+n
-                    if nzycheck[n,z,iarr]==1:
+                    if nzycheck_display[n,z,iarr]==1:
                         ax.text(n,z,a,horizontalalignment='center',verticalalignment='center',\
                                 fontsize=imlabel_fontsize,clip_on=True)
 
         # plot lines at magic numbers
         if imagic:
-            ixymagic=[2, 8, 20, 28, 50, 82, 126]
-            nmagic = len(ixymagic)
-            for magic in ixymagic:
-                if magic<=nzmax:
-                    try:
-                        xnmin = min(argwhere(nzycheck[:,magic,iarr]))[0]
-                        xnmax = max(argwhere(nzycheck[:,magic,iarr]))[0]
-                        line = ax.plot([xnmin,xnmax],[magic,magic],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
-                if magic<=nnmax:
-                    try:
-                        yzmin = min(argwhere(nzycheck[magic,:,iarr]))[0]
-                        yzmax = max(argwhere(nzycheck[magic,:,iarr]))[0]
-                        line = ax.plot([magic,magic],[yzmin,yzmax],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
+            self._draw_magic_lines(ax, nzycheck_display, iarr=iarr)
 
         # set axis limits
         if plotaxis==[0,0,0,0]:
@@ -1374,9 +1498,18 @@ class NuPlotMixin(PlotCommon):
     def abu_flux_chart(self, cycle, ilabel=True, imlabel=True,
                        imagic=False, boxstable=True, lbound=(-12,0),
                        plotaxis=[0,0,0,0], which_flux=None, prange=None,
-                       profile='charged', show=True):
+                       profile='charged', show=True, show_abundance=True,
+                       color_map='summer', flux_color_map='autumn',
+                       alpha=1., threshold=None):
         '''
-        Plots an abundance and flux chart
+        Plots a flux chart, optionally alongside an abundance chart.
+
+        This used to be two near-duplicate methods (`abu_flux_chart`
+        two-panel, `flux_solo` flux-only) that their own docstring
+        admitted should be merged. `show_abundance` now selects between
+        them: True reproduces the old `abu_flux_chart` two-panel
+        layout, False reproduces the old `flux_solo` single-panel
+        layout (`flux_solo` is kept as a thin wrapper for that case).
 
         Parameters
         ----------
@@ -1385,62 +1518,67 @@ class NuPlotMixin(PlotCommon):
             this method will then do a plot for each of these cycles
             and save them all to a file.
         ilabel : boolean, optional
-            Elemental labels off/on.  The default is True.
+            Elemental labels off/on, for the abundance panel. The
+            default is True.
         imlabel : boolean, optional
-            Label for isotopic masses off/on.  The default is True.
+            Label for isotopic masses off/on, for the abundance panel.
+            The default is True.
         imagic : boolean, optional
-            Turn lines for magic numbers off/on.  The default is False.
+            Turn lines for magic numbers off/on, for the abundance
+            panel. The default is False. (The flux panel's own
+            element/mass-number labels and magic-number lines are
+            controlled separately below -- see the note in the code.)
         boxstable : boolean, optional
-            Plot the black boxes around the stable elements.  The
-            defaults is True.
+            Plot the black boxes around the stable elements. The
+            default is True.
         lbound : tuple, optional
-            Boundaries for colour spectrum ploted.  The default is
-            (-12,0).
+            Boundaries for colour spectrum plotted on the abundance
+            panel. The default is (-12,0).
         plotaxis : list, optional
-            Set axis limit.  If [0, 0, 0, 0] the complete range in (N,Z)
-            will be plotted.  It equates to [xMin, xMax, Ymin, Ymax].
+            Set axis limit. If [0, 0, 0, 0] the complete range in (N,Z)
+            will be plotted. It equates to [xMin, xMax, Ymin, Ymax].
             The default is [0, 0, 0, 0].
         which_flux : integer, optional
-            Set to 0 for nucleosynthesis flux plot.  Set to 1 for
-            energy flux plot.  Setting wich_flux to 0 is equivelent to
-            setting it to 0.  The default is None.
+            Set to 0 for nucleosynthesis flux plot. Set to 1 for energy
+            flux plot. The default is None (equivalent to 0).
         prange : integer, optional
-            Range of fluxes to be considered, if prange is None then
-            the plot range is set to 8.  The default is None.
+            Range of fluxes to be considered (dex below the max flux);
+            defaults to 8 if None.
         profile : string, optional
-            'charged' is ideal setting to show charged particle
-            reactions flow.  'neutron' is ideal setting for neutron
-            captures flows.  The default is 'charged'.
+            'charged' is ideal for charged particle reaction flows.
+            'neutron' is ideal for neutron capture flows. The default
+            is 'charged'.
         show : boolean, optional
-            Boolean of if the plot should be displayed.  Useful with
-            saving multiple plots using abu_chartMulti.  The default is
-            True.
+            Whether the plot should be displayed. The default is True.
+        show_abundance : boolean, optional
+            Whether to also draw the abundance panel alongside the flux
+            panel. The default is True (old `abu_flux_chart` behaviour);
+            False reproduces the old `flux_solo` behaviour.
+        color_map : string, optional
+            Colormap for the abundance panel. The default is 'summer'
+            (matching the old `abu_flux_chart` default).
+        flux_color_map : string, optional
+            Colormap for the flux arrows. The default is 'autumn'
+            (matching the old `abu_flux_chart` default; the old
+            `flux_solo` used 'plasma' -- pass that explicitly if you
+            want its look).
+        alpha : float, optional
+            Transparency of the flux arrows. The default is 1
+            (matching the old `abu_flux_chart` default; the old
+            `flux_solo` used 0.6 and its wrapper below passes that
+            explicitly).
+        threshold : float, optional
+            If given (log10 mass fraction), abundance-panel isotopes
+            below it are not drawn at all (only meaningful with
+            `show_abundance=True`). The default is None.
 
         '''
-        #######################################################################
-        #### plot options
-        # Set axis limit: If default [0,0,0,0] the complete range in (N,Z) will
-        # be plotted, i.e. all isotopes, else specify the limits in
-        # plotaxis = [xmin,xmax,ymin,ymax]
-
-        #######################################################################
-
-        # read data file
-        #inpfile = cycle
-        #ff = fdic.ff(inpfile)
-        # with the flux implementation I am not using mass range for now.
-        # It may be introduced eventually.
         mass_range = None
-        if str(cycle.__class__)=="<type 'list'>":
-            self.abu_chartMulti(cycle, mass_range,ilabel,imlabel,imlabel_fontsize,imagic,boxstable,\
-                                lbound,plotaxis)
+        if isinstance(cycle, list):
+            self.abu_chartMulti(cycle, mass_range, ilabel, imlabel, 8, imagic,
+                                boxstable, lbound, plotaxis)
             return
         plotType=self._classTest()
-
-        #if mass_range!=None and mass_range[0]>mass_range[1]:
-            #print 'Please input a proper mass range'
-            #print 'Returning None'
-            #return None
 
         if plotType=='se':
             cycle=self.se.findCycle(cycle)
@@ -1533,209 +1671,138 @@ class NuPlotMixin(PlotCommon):
                 nzycheck[ni,zi,1] = yin[i]
                 nzycheck_plot[ni,zi,0] = 1
 
-
-
         #######################################################################
         # elemental names: elname(i) is the name of element with Z=i
 
         elname=self.elements_names
 
         #### create plot
-        ## define axis and plot style (colormap, size, fontsize etc.)
-        if plotaxis==[0,0,0,0]:
-            xdim=10
-            ydim=6
-        else:
-            dx = plotaxis[1]-plotaxis[0]
-            dy = plotaxis[3]-plotaxis[2]
-            ydim = 6
-            xdim = ydim*dx/dy
-
-
-        params = {'axes.labelsize':  15,
-                  'text.fontsize':   12,
-                  'legend.fontsize': 15,
-                  'xtick.labelsize': 15,
-                  'ytick.labelsize': 15,
-                  'text.usetex': True}
-        #pl.rcParams.update(params) #May cause Error, someting to do with tex
-        #fig=pl.figure(figsize=(xdim,ydim),dpi=100)
         fig=pl.figure()
-        if profile == 'charged':
-            ax1 = fig.add_subplot(1, 2, 1)
-        elif profile == 'neutron':
-            ax1 = fig.add_subplot(2, 1, 1)
-        #axx = 0.10
-        #axy = 0.10
-        #axw = 0.85
-        #axh = 0.8
-        #ax1=pl.axes([axx,axy,axw,axh])
-        # Tick marks
-        xminorlocator = MultipleLocator(1)
-        xmajorlocator = MultipleLocator(5)
-        ax1.xaxis.set_major_locator(xmajorlocator)
-        ax1.xaxis.set_minor_locator(xminorlocator)
-        yminorlocator = MultipleLocator(1)
-        ymajorlocator = MultipleLocator(5)
-        ax1.yaxis.set_major_locator(ymajorlocator)
-        ax1.yaxis.set_minor_locator(yminorlocator)
 
-        # color map choice for abundances
-        #cmapa = cm.jet
-        cmapa = cm.summer
-        # color map choice for arrows
-        cmapr = cm.summer
-        # if a value is below the lower limit its set to white
-        cmapa.set_under(color='w')
-        cmapr.set_under(color='w')
-        # set value range for abundance colors (log10(Y))
-        norma = colors.Normalize(vmin=lbound[0],vmax=lbound[1])
-        # set x- and y-axis scale aspect ratio to 1
-        #ax1.set_aspect('equal')
-        #print time,temp and density on top
-        temp = ' '#'%8.3e' %ff['temp']
-        time = ' '#'%8.3e' %ff['time']
-        dens = ' '#'%8.3e' %ff['dens']
+        if show_abundance:
+            if profile == 'charged':
+                ax1 = fig.add_subplot(1, 2, 1)
+            elif profile == 'neutron':
+                ax1 = fig.add_subplot(2, 1, 1)
+            # Tick marks
+            xminorlocator = MultipleLocator(1)
+            xmajorlocator = MultipleLocator(5)
+            ax1.xaxis.set_major_locator(xmajorlocator)
+            ax1.xaxis.set_minor_locator(xminorlocator)
+            yminorlocator = MultipleLocator(1)
+            ymajorlocator = MultipleLocator(5)
+            ax1.yaxis.set_major_locator(ymajorlocator)
+            ax1.yaxis.set_minor_locator(yminorlocator)
 
-        #May cause Error, someting to do with tex
-        '''
-        #box1 = TextArea("t : " + time + " s~~/~~T$_{9}$ : " + temp + "~~/~~$\\rho_{b}$ : " \
-        #             + dens + ' g/cm$^{3}$', textprops=dict(color="k"))
-        anchored_box = AnchoredOffsetbox(loc=3,
-                        child=box1, pad=0.,
-                        frameon=False,
-                        bbox_to_anchor=(0., 1.02),
-                        bbox_transform=ax.transAxes,
-                        borderpad=0.,
-                        )
-        ax.add_artist(anchored_box)
-        '''
-        ## Colour bar plotted
+            # color map choice for abundances
+            try:
+                cmapa = matplotlib.colormaps[color_map]
+            except AttributeError:
+                cmapa = cm.get_cmap(name=color_map)
+            cmapa.set_under(color='w')
+            # set value range for abundance colors (log10(Y))
+            norma = colors.Normalize(vmin=lbound[0],vmax=lbound[1])
 
-        patches = []
-        color = []
+            # `nzycheck_display` drives everything drawn on the
+            # abundance panel so `threshold` hides an isotope
+            # consistently everywhere, not just its coloured cell.
+            nzycheck_display = nzycheck
+            if threshold is not None:
+                nzycheck_display = nzycheck.copy()
+                for i in range(nzmax):
+                    for j in range(nnmax):
+                        if nzycheck_display[j,i,0]==1:
+                            yab = nzycheck_display[j,i,1]
+                            if yab == 0:
+                                yab = 1e-99
+                            if log10(yab) < threshold:
+                                nzycheck_display[j,i,0] = 0
 
-        for i in range(nzmax):
-            for j in range(nnmax):
-                if nzycheck[j,i,0]==1:
-                    xy = j-0.5,i-0.5
+            patches = []
+            color = []
 
-                    rect = Rectangle(xy,1,1,)
+            for i in range(nzmax):
+                for j in range(nnmax):
+                    if nzycheck_display[j,i,0]==1:
+                        xy = j-0.5,i-0.5
 
-                    # abundance
-                    yab = nzycheck[j,i,1]
-                    if yab == 0:
+                        rect = Rectangle(xy,1,1,)
 
-                        yab=1e-99
+                        # abundance
+                        yab = nzycheck_display[j,i,1]
+                        if yab == 0:
+
+                            yab=1e-99
 
 
-                    col =log10(yab)
+                        col =log10(yab)
 
-                    patches.append(rect)
-                    color.append(col)
+                        patches.append(rect)
+                        color.append(col)
 
 
-        p = PatchCollection(patches, cmap=cmapa, norm=norma)
-        p.set_array(array(color))
-        p.set_zorder(1)
-        ax1.add_collection(p)
-        cb = pl.colorbar(p)
+            p = PatchCollection(patches, cmap=cmapa, norm=norma)
+            p.set_array(array(color))
+            p.set_zorder(1)
+            ax1.add_collection(p)
+            cb = pl.colorbar(p)
 
-        # colorbar label
-        if profile == 'neutron':
-            cb.set_label('log$_{10}$(X)')
+            # colorbar label
+            if profile == 'neutron':
+                cb.set_label('log$_{10}$(X)')
+
+            # Add black frames for stable isotopes
+            if boxstable:
+                self._draw_stable_boxes(ax1, lw=4.)
+
+            # decide which array to take for label positions
+            iarr = 0
+
+            # plot element labels
+            if ilabel:
+                for z in range(nzmax):
+                    try:
+                        # .min()/.max(), not min(...)[0]/max(...)[0] --
+                        # see _draw_magic_lines note: this module's
+                        # `from numpy import *` shadows the builtins.
+                        nmin = argwhere(nzycheck_display[:,z,iarr]).min()-1
+                        nmax = argwhere(nzycheck_display[:,z,iarr]).max()+1
+                        ax1.text(nmin,z,elname[z],horizontalalignment='center',verticalalignment='center',\
+                                fontsize='small',clip_on=True)
+                        ax1.text(nmax,z,elname[z],horizontalalignment='center',verticalalignment='center',\
+                                fontsize='small',clip_on=True)
+                    except ValueError:
+                        continue
+
+            # plot mass numbers
+            if imlabel:
+                for z in range(nzmax):
+                    for n in range(nnmax):
+                        a = z+n
+                        if nzycheck_display[n,z,iarr]==1:
+                            ax1.text(n,z,a,horizontalalignment='center',verticalalignment='center',\
+                                    fontsize='x-small',clip_on=True)
+
+            # plot lines at magic numbers
+            if imagic:
+                self._draw_magic_lines(ax1, nzycheck_display, iarr=iarr)
+
+            # set axis limits
+            if plotaxis==[0,0,0,0]:
+
+                xmax=max(nin)
+                ymax=max(zin)
+                ax1.axis([-0.5,xmax+0.5,-0.5,ymax+0.5])
+            else:
+                ax1.axis(plotaxis)
+
+            # set x- and y-axis label
+            ax1.set_ylabel('Proton number')
+            if profile == 'charged':
+                ax1.set_xlabel('Neutron number')
 
         # plot file name
         graphname = 'abundance-flux-chart'+str(cycle)
-
-        # Add black frames for stable isotopes
-        if boxstable:
-            for i in range(len(self.stable_el)):
-                if i == 0:
-                    continue
-
-
-                tmp = self.stable_el[i]
-                try:
-                    zz= self.elements_names.index(tmp[0]) #charge
-                except:
-                    continue
-
-                for j in range(len(tmp)):
-                    if j == 0:
-                        continue
-
-                    nn = int(tmp[j]) #atomic mass
-                    nn=nn-zz
-
-                    xy = nn-0.5,zz-0.5
-                    rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=4.)
-                    rect.set_zorder(2)
-                    ax1.add_patch(rect)
-
-
-
-
-        # decide which array to take for label positions
-        iarr = 0
-
-        # plot element labels
-        if ilabel:
-            for z in range(nzmax):
-                try:
-                    nmin = min(argwhere(nzycheck[:,z,iarr]))[0]-1
-                    nmax = max(argwhere(nzycheck[:,z,iarr]))[0]+1
-                    ax1.text(nmin,z,elname[z],horizontalalignment='center',verticalalignment='center',\
-                            fontsize='small',clip_on=True)
-                    ax1.text(nmax,z,elname[z],horizontalalignment='center',verticalalignment='center',\
-                            fontsize='small',clip_on=True)
-                except ValueError:
-                    continue
-
-        # plot mass numbers
-        if imlabel:
-            for z in range(nzmax):
-                for n in range(nnmax):
-                    a = z+n
-                    if nzycheck[n,z,iarr]==1:
-                        ax1.text(n,z,a,horizontalalignment='center',verticalalignment='center',\
-                                fontsize='x-small',clip_on=True)
-
-
-        # plot lines at magic numbers
-        if imagic:
-            ixymagic=[2, 8, 20, 28, 50, 82, 126]
-            nmagic = len(ixymagic)
-            for magic in ixymagic:
-                if magic<=nzmax:
-                    try:
-                        xnmin = min(argwhere(nzycheck[:,magic,iarr]))[0]
-                        xnmax = max(argwhere(nzycheck[:,magic,iarr]))[0]
-                        line = ax1.plot([xnmin,xnmax],[magic,magic],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
-                if magic<=nnmax:
-                    try:
-                        yzmin = min(argwhere(nzycheck[magic,:,iarr]))[0]
-                        yzmax = max(argwhere(nzycheck[magic,:,iarr]))[0]
-                        line = ax1.plot([magic,magic],[yzmin,yzmax],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
-
-        # set axis limits
-        if plotaxis==[0,0,0,0]:
-
-            xmax=max(nin)
-            ymax=max(zin)
-            ax1.axis([-0.5,xmax+0.5,-0.5,ymax+0.5])
-        else:
-            ax1.axis(plotaxis)
-
-        # set x- and y-axis label
-        ax1.set_ylabel('Proton number')
-        if profile == 'charged':
-            ax1.set_xlabel('Neutron number')
-        #pl.title('Isotopic Chart for cycle '+str(int(cycle)))
 
         #
         # here below I read data from the flux_*****.DAT file.
@@ -1748,11 +1815,6 @@ class NuPlotMixin(PlotCommon):
         f.close()
 
         print_max_flux_in_plot =  False
-        # color map choice for fluxes
-        #cmapa = cm.jet
-        cmapa = cm.autumn
-        # color map choice for arrows
-        cmapr = cm.autumn
         # starting point of arrow
         coord_x_1 = []
         coord_y_1 = []
@@ -1822,16 +1884,15 @@ class NuPlotMixin(PlotCommon):
                     coord_x_3_small.append(int(coord_x_3[i]))
                     flux_log10_small.append(flux_log10[i])
 
-
-
-        # elemental labels off/on [0/1]
-        ilabel = 1
-
-        # label for isotopic masses off/on [0/1]
-        imlabel = 1
-
-        # turn lines for magic numbers off/on [0/1]
-        imagic = 0
+        # elemental labels / mass-number labels / magic lines on the FLUX
+        # panel are intentionally independent of the `ilabel`/`imlabel`/
+        # `imagic` arguments above (which only control the abundance
+        # panel) -- this reproduces the original abu_flux_chart/flux_solo
+        # behaviour exactly, where these were hardcoded rather than
+        # threaded through from the function signature.
+        flux_ilabel = True
+        flux_imlabel = True
+        flux_imagic = False
 
         # flow is plotted over "prange" dex. If flow < maxflow-prange it is not plotted
         if prange == None:
@@ -1839,16 +1900,20 @@ class NuPlotMixin(PlotCommon):
             prange = 8.
 
         #############################################
-        #print flux_log10_small
         # we should scale prange on plot_axis range, not on max_flux!
         max_flux = max(flux_log10)
-        ind_max_flux = flux_log10.index(max_flux)
         if plotaxis!=[0,0,0,0]:
             max_flux_small = max(flux_log10_small)
 
+        # NOTE: `max(a+b+c)` (concatenated single argument), not
+        # `max(max(a),max(b),max(c))` -- the latter's outer call is
+        # ambiguous once `max`/`min` are shadowed by `from numpy import
+        # *` (numpy's max() takes `(array, axis, out)`, not N scalars
+        # to compare, so it silently does the wrong thing rather than
+        # raising, and previously crashed downstream).
         if plotaxis==[0,0,0,0]:
-            nzmax = int(max(max(coord_y_1),max(coord_y_2),max(coord_y_3)))+1
-            nnmax = int(max(max(coord_x_1),max(coord_x_2),max(coord_x_3)))+1
+            nzmax = int(max(coord_y_1+coord_y_2+coord_y_3))+1
+            nnmax = int(max(coord_x_1+coord_x_2+coord_x_3))+1
             coord_x_1_small = coord_x_1
             coord_x_2_small = coord_x_2
             coord_x_3_small = coord_x_3
@@ -1858,16 +1923,8 @@ class NuPlotMixin(PlotCommon):
             flux_log10_small= flux_log10
             max_flux_small  = max_flux
         else:
-            nzmax = int(max(max(coord_y_1_small),max(coord_y_2_small),max(coord_y_3_small)))+1
-            nnmax = int(max(max(coord_x_1_small),max(coord_x_2_small),max(coord_x_3_small)))+1
-
-        for i in range(nzmax):
-            for j in range(nnmax):
-                if nzycheck[j,i,0]==1:
-                    xy = j-0.5,i-0.5
-                    rect = Rectangle(xy,1,1,)
-                    patches.append(rect)
-
+            nzmax = int(max(coord_y_1_small+coord_y_2_small+coord_y_3_small))+1
+            nnmax = int(max(coord_x_1_small+coord_x_2_small+coord_x_3_small))+1
 
         nzycheck = zeros([nnmax_plot,nzmax,3])
         coord_x_out = zeros(len(coord_x_2_small), dtype='int')
@@ -1890,10 +1947,13 @@ class NuPlotMixin(PlotCommon):
                 nzycheck[coord_x_out[i],coord_y_out[i],2] = 1
 
         #### create plot
-        if profile == 'charged':
-            ax2 = fig.add_subplot(1, 2, 2)
-        elif profile == 'neutron':
-            ax2 = fig.add_subplot(2, 1, 2)
+        if show_abundance:
+            if profile == 'charged':
+                ax2 = fig.add_subplot(1, 2, 2)
+            elif profile == 'neutron':
+                ax2 = fig.add_subplot(2, 1, 2)
+        else:
+            ax2 = fig.add_subplot(1, 1, 1)
         # Tick marks
         xminorlocator = MultipleLocator(1)
         xmajorlocator = MultipleLocator(5)
@@ -1903,53 +1963,23 @@ class NuPlotMixin(PlotCommon):
         ymajorlocator = MultipleLocator(5)
         ax2.yaxis.set_major_locator(ymajorlocator)
         ax2.yaxis.set_minor_locator(yminorlocator)
-        ## define axis and plot style (colormap, size, fontsize etc.)
-        if plotaxis==[0,0,0,0]:
-            xdim=10
-            ydim=6
-        else:
-            dx = plotaxis[1]-plotaxis[0]
-            dy = plotaxis[3]-plotaxis[2]
-            ydim = 6
-            xdim = ydim*dx/dy
 
-        format = 'pdf'
-        # set x- and y-axis scale aspect ratio to 1
-        #ax2.set_aspect('equal')
-
-        # Add black frames for stable isotopes
         # Add black frames for stable isotopes
         if boxstable:
-            for i in range(len(self.stable_el)):
-                if i == 0:
-                    continue
+            self._draw_stable_boxes(ax2, lw=4.)
 
-
-                tmp = self.stable_el[i]
-                try:
-                    zz= self.elements_names.index(tmp[0]) #charge
-                except:
-                    continue
-
-                for j in range(len(tmp)):
-                    if j == 0:
-                        continue
-
-                    nn = int(tmp[j]) #atomic mass
-                    nn=nn-zz
-
-                    xy = nn-0.5,zz-0.5
-                    rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=4.)
-                    rect.set_zorder(2)
-                    ax2.add_patch(rect)
-
-
+        flux_patches = []
         apatches = []
         acolor = []
         m = old_div(0.8,prange)
         vmax=ceil(max(flux_log10_small))
         vmin=max(flux_log10_small)-prange
         b=-vmin*m+0.1
+        try:
+            cmapr = matplotlib.colormaps[flux_color_map]
+        except AttributeError:
+            cmapr = cm.get_cmap(name=flux_color_map)
+        cmapr.set_under(color='w')
         normr = colors.Normalize(vmin=vmin,vmax=vmax)
         ymax=0.
         xmax=0.
@@ -1971,20 +2001,17 @@ class NuPlotMixin(PlotCommon):
                 acolor.append(acol)
             xy = x-0.5,y-0.5
             rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=1.)
-            patches.append(rect)
+            flux_patches.append(rect)
             xy = x+dx-0.5,y+dy-0.5
             rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=1.)
-            patches.append(rect)
+            flux_patches.append(rect)
 
+        p2 = PatchCollection(flux_patches,facecolor='w')
+        p2.set_zorder(1)
+        ax2.add_collection(p2)
 
-        p = PatchCollection(patches,norm=0,facecolor='w')
-        p.set_zorder(1)
-        ax2.add_collection(p)
-
-
-
-
-        a = PatchCollection(apatches, cmap=cmapr, norm=normr)
+        a = PatchCollection(apatches, cmap=cmapr, norm=normr,
+                             edgecolors='black', linewidths=1, alpha=alpha)
         a.set_array(array(acolor))
         a.set_zorder(3)
         ax2.add_collection(a)
@@ -1996,45 +2023,30 @@ class NuPlotMixin(PlotCommon):
             cb.set_label('log$_{10}$(f)')
 
         # decide which array to take for label positions
-        iarr = 2
+        iarr = 0
 
         # plot element labels
-        for z in range(nzmax):
-            try:
-                nmin = min(argwhere(nzycheck_plot[:,z,iarr-2]))[0]-1
-                nmax = max(argwhere(nzycheck_plot[:,z,iarr-2]))[0]+1
-                ax2.text(nmin,z,elname[z],horizontalalignment='center',verticalalignment='center',fontsize='small',clip_on=True)
-                ax2.text(nmax,z,elname[z],horizontalalignment='center',verticalalignment='center',fontsize='small',clip_on=True)
-            except ValueError:
-                continue
+        if flux_ilabel:
+            for z in range(nzmax):
+                try:
+                    nmin = argwhere(nzycheck_plot[:,z,iarr]).min()-1
+                    nmax = argwhere(nzycheck_plot[:,z,iarr]).max()+1
+                    ax2.text(nmin,z,elname[z],horizontalalignment='center',verticalalignment='center',fontsize='small',clip_on=True)
+                    ax2.text(nmax,z,elname[z],horizontalalignment='center',verticalalignment='center',fontsize='small',clip_on=True)
+                except ValueError:
+                    continue
 
         # plot mass numbers
-        if imlabel:
+        if flux_imlabel:
             for z in range(nzmax):
                 for n in range(nnmax_plot):
                     a = z+n
-                    if nzycheck_plot[n,z,iarr-2]==1:
+                    if nzycheck_plot[n,z,iarr]==1:
                         ax2.text(n,z,a,horizontalalignment='center',verticalalignment='center',fontsize='x-small',clip_on=True)
 
         # plot lines at magic numbers
-        if imagic==1:
-            ixymagic=[2, 8, 20, 28, 50, 82, 126]
-            nmagic = len(ixymagic)
-            for magic in ixymagic:
-                if magic<=nzmax:
-                    try:
-                        xnmin = min(argwhere(nzycheck[:,magic,iarr-2]))[0]
-                        xnmax = max(argwhere(nzycheck[:,magic,iarr-2]))[0]
-                        line = ax2.plot([xnmin,xnmax],[magic,magic],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
-                if magic<=nnmax:
-                    try:
-                        yzmin = min(argwhere(nzycheck[magic,:,iarr-2]))[0]
-                        yzmax = max(argwhere(nzycheck[magic,:,iarr-2]))[0]
-                        line = ax2.plot([magic,magic],[yzmin,yzmax],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
+        if flux_imagic:
+            self._draw_magic_lines(ax2, nzycheck, iarr=iarr)
 
         # set axis limits
         if plotaxis==[0,0,0,0]:
@@ -2044,7 +2056,7 @@ class NuPlotMixin(PlotCommon):
 
         # set x- and y-axis label
         ax2.set_xlabel('Neutron number')
-        if profile == 'neutron':
+        if profile == 'neutron' or not show_abundance:
             ax2.set_ylabel('Proton number')
         if which_flux == None or which_flux == 0:
             max_flux_label="max flux = "+str('{0:.4f}'.format(max_flux))
@@ -2053,184 +2065,97 @@ class NuPlotMixin(PlotCommon):
         if print_max_flux_in_plot:
             ax2.text(plotaxis[1]-1.8,plotaxis[2]+0.1,max_flux_label,fontsize=10.)
 
-        #fig.savefig(graphname)
         print(graphname,'is done')
         if show:
             pl.show()
         if turnoff:
             ion()
         return
-    
+
     def flux_solo(self, cycle, ilabel=True, imlabel=True,
                        imagic=False, boxstable=True, lbound=(-12,0),
                        plotaxis=[0,0,0,0], which_flux=None, prange=None,
-                       profile='charged', show=True, alpha =0.6):
+                       profile='charged', show=True, alpha=0.6):
         '''
-        Plots just a flux chart. This must be merged with abu_flux_chart as most of it is the same code.
-        OC 1/19
+        Plots just a flux chart (no abundance panel).
+
+        Deprecated: kept only for backward compatibility. Equivalent
+        to `abu_flux_chart(..., show_abundance=False, alpha=0.6,
+        flux_color_map='plasma')`, which is what this now calls.
+        '''
+        return self.abu_flux_chart(cycle, ilabel=ilabel, imlabel=imlabel,
+                                    imagic=imagic, boxstable=boxstable,
+                                    lbound=lbound, plotaxis=plotaxis,
+                                    which_flux=which_flux, prange=prange,
+                                    profile=profile, show=show,
+                                    show_abundance=False,
+                                    flux_color_map='plasma', alpha=alpha)
+
+    def _isotope_name(self, n, z):
+        '''Format an (n, z) grid key as an isotope name, e.g. 'C-13'.'''
+        return '{}-{}'.format(self.elements_names[z], n+z)
+
+    def abu_ratio_chart(self, other, cycle, other_cycle=None, residual=False,
+                         threshold=None, cmap='RdBu_r', boxstable=True,
+                         imagic=False, ilabel=True, imlabel=True,
+                         mass_range=None, plotaxis=[0,0,0,0], show=True,
+                         savefig=False, path=None):
+        '''
+        Plots an (N,Z) grid chart comparing this dataset's abundances
+        against another abu_vector/se instance's -- e.g. a factored
+        run against its baseline. Isotopes present in only one dataset
+        are drawn as a distinct hatched cell rather than silently
+        dropped or coloured as if they were an extreme ratio.
+
         Parameters
         ----------
-        cycle : string, integer or list
-            The cycle we are looking in. If it is a list of cycles,
-            this method will then do a plot for each of these cycles
-            and save them all to a file.
-        ilabel : boolean, optional
-            Elemental labels off/on.  The default is True.
-        imlabel : boolean, optional
-            Label for isotopic masses off/on.  The default is True.
-        imagic : boolean, optional
-            Turn lines for magic numbers off/on.  The default is False.
-        boxstable : boolean, optional
-            Plot the black boxes around the stable elements.  The
-            defaults is True.
-        lbound : tuple, optional
-            Boundaries for colour spectrum ploted.  The default is
-            (-12,0).
-        plotaxis : list, optional
-            Set axis limit.  If [0, 0, 0, 0] the complete range in (N,Z)
-            will be plotted.  It equates to [xMin, xMax, Ymin, Ymax].
-            The default is [0, 0, 0, 0].
-        which_flux : integer, optional
-            Set to 0 for nucleosynthesis flux plot.  Set to 1 for
-            energy flux plot.  Setting wich_flux to 0 is equivelent to
-            setting it to 0.  The default is None.
-        prange : integer, optional
-            Range of fluxes to be considered, if prange is None then
-            the plot range is set to 8.  The default is None.
-        profile : string, optional
-            'charged' is ideal setting to show charged particle
-            reactions flow.  'neutron' is ideal setting for neutron
-            captures flows.  The default is 'charged'.
-        show : boolean, optional
-            Boolean of if the plot should be displayed.  Useful with
-            saving multiple plots using abu_chartMulti.  The default is
-            True.
+        other : abu_vector or se instance
+            The dataset to compare against.
+        cycle : integer
+            Cycle to use from `self`.
+        other_cycle : integer, optional
+            Cycle to use from `other`. Defaults to `cycle`, so the
+            common case (same cycle number, different run) needs only
+            one cycle argument.
+        residual : boolean, optional
+            False (default): colour by log10(X_self / X_other) -- the
+            standard way to compare abundances spanning many decades.
+            True: colour by (X_self - X_other) / X_other -- linear
+            relative difference, more legible when the two datasets
+            are close (e.g. a small rate-factor perturbation against
+            its baseline).
+        threshold : float, optional
+            If given (log10 mass fraction), isotopes whose abundance
+            is below it in *both* datasets are skipped entirely (they
+            carry no meaningful ratio/residual information). The
+            default is None.
+        cmap : string, optional
+            Diverging colormap, centred at 0. The default is 'RdBu_r'
+            (red = enhanced relative to `other`, blue = depleted).
+        boxstable, imagic, ilabel, imlabel, mass_range, plotaxis, show,
+        savefig, path : as in `abu_chart`.
+
+        Returns
+        -------
+        dict {(n, z): value} of the plotted ratio/residual values, for
+        isotopes present in both datasets (not the one-sided ones).
         '''
-        #######################################################################
-        #### plot options
-        # Set axis limit: If default [0,0,0,0] the complete range in (N,Z) will
-        # be plotted, i.e. all isotopes, else specify the limits in
-        # plotaxis = [xmin,xmax,ymin,ymax]
+        self_grid = self._abu_grid(cycle, mass_range=mass_range)
+        other_grid = other._abu_grid(
+            other_cycle if other_cycle is not None else cycle, mass_range=mass_range)
 
-        #######################################################################
+        all_keys = set(self_grid) | set(other_grid)
+        if not all_keys:
+            raise IOError("No isotopes found in either dataset")
 
-        # read data file
-        #inpfile = cycle
-        #ff = fdic.ff(inpfile)
-        # with the flux implementation I am not using mass range for now.
-        # It may be introduced eventually.
-        mass_range = None
-        if str(cycle.__class__)=="<type 'list'>":
-            self.abu_chartMulti(cycle, mass_range,ilabel,imlabel,imlabel_fontsize,imagic,boxstable,\
-                                lbound,plotaxis)
-            return
-        plotType=self._classTest()
-
-        #if mass_range!=None and mass_range[0]>mass_range[1]:
-            #print 'Please input a proper mass range'
-            #print 'Returning None'
-            #return None
-
-        if plotType=='se':
-            cycle=self.se.findCycle(cycle)
-            nin=zeros(len(self.se.A))
-            zin=zeros(len(self.se.Z))
-            for i in range(len(nin)):
-                nin[i]=self.se.A[i]
-                zin[i]=self.se.Z[i]
-            for i in range(len(nin)):
-                nin[i]=nin[i]-zin[i]
-            yin=self.get(cycle, 'iso_massf')
-            isom=self.se.isomeric_states
-
-            masses = self.se.get(cycle,'mass')
-            if mass_range != None:
-                masses = self.se.get(cycle,'mass')
-                masses.sort()
-
-            if mass_range != None:
-                tmpyps=[]
-                masses = self.se.get(cycle,'mass')
-                masses = self.se.get(cycle,'mass')
-                masses.sort()
-                for i in range(len(masses)):
-                    if (masses[i] >mass_range[0] and masses[i]<mass_range[1]) or\
-                            (masses[i]==mass_range[0] or masses[i]==mass_range[1]):
-                        tmpyps.append(yin[i])
-                yin=tmpyps
-
-
-            tmp=zeros(len(yin[0]))
-            for i in range(len(yin)):
-                for j in range(len(yin[i])):
-                    tmp[j]+=yin[i][j]
-
-            tmp=old_div(tmp,len(yin))
-
-            yin=tmp
-
-        elif plotType=='PPN':
-
-            ain=self.get('A',cycle)
-            zin=self.get('Z',cycle)
-            nin=ain-zin
-            yin=self.get('ABUNDANCE_MF',cycle)
-            isom=self.get('ISOM',cycle)
-
-            if mass_range != None:
-                tmpA=[]
-                tmpZ=[]
-                tmpIsom=[]
-                tmpyps=[]
-                for i in range(len(nin)):
-                    if (ain[i] >mass_range[0] and ain[i]<mass_range[1])\
-                    or (ain[i]==mass_range[0] or ain[i]==mass_range[1]):
-                        tmpA.append(nin[i])
-                        tmpZ.append(zin[i])
-                        tmpIsom.append(isom[i])
-                        tmpyps.append(yin[i])
-                zin=tmpZ
-                nin=tmpA
-                yin=tmpyps
-                isom=tmpIsom
-
-        else:
-            print('This method, abu_chart, is not supported by this class')
-            print('Returning None')
-            return None
-        # in case we call from ipython -pylab, turn interactive on at end again
-        turnoff=False
+        turnoff = False
         if not show:
             try:
                 ioff()
-                turnoff=True
+                turnoff = True
             except NameError:
-                turnoff=False
+                turnoff = False
 
-        nnmax = int(max(nin))+1
-        nzmax = int(max(zin))+1
-        nnmax_plot = nnmax
-        nzmax_plot = nzmax
-        nzycheck = zeros([nnmax,nzmax,3])
-        nzycheck_plot = zeros([nnmax,nzmax,3])
-        for i in range(len(nin)):
-            if isom[i]==1:
-                ni = int(nin[i])
-                zi = int(zin[i])
-
-                nzycheck[ni,zi,0] = 1
-                nzycheck[ni,zi,1] = yin[i]
-                nzycheck_plot[ni,zi,0] = 1
-
-
-
-        #######################################################################
-        # elemental names: elname(i) is the name of element with Z=i
-
-        elname=self.elements_names
-
-        #### create plot
-        ## define axis and plot style (colormap, size, fontsize etc.)
         if plotaxis==[0,0,0,0]:
             xdim=10
             ydim=6
@@ -2240,430 +2165,260 @@ class NuPlotMixin(PlotCommon):
             ydim = 6
             xdim = ydim*dx/dy
 
-
-        params = {'axes.labelsize':  15,
-                  'text.fontsize':   12,
-                  'legend.fontsize': 15,
-                  'xtick.labelsize': 15,
-                  'ytick.labelsize': 15,
-                  'text.usetex': True}
-        
-
-        #pl.rcParams.update(params) #May cause Error, someting to do with tex
-        #fig=pl.figure(figsize=(xdim,ydim),dpi=100)
-        fig=pl.figure()
-
-        # color map choice for abundances
-        #cmapa = cm.jet
-        cmapa = cm.summer
-        # color map choice for arrows
-        cmapr = cm.summer
-        # if a value is below the lower limit its set to white
-        cmapa.set_under(color='w')
-        cmapr.set_under(color='w')
-        # set value range for abundance colors (log10(Y))
-        norma = colors.Normalize(vmin=lbound[0],vmax=lbound[1])
-        # set x- and y-axis scale aspect ratio to 1
-        #ax1.set_aspect('equal')
-        #print time,temp and density on top
-        temp = ' '#'%8.3e' %ff['temp']
-        time = ' '#'%8.3e' %ff['time']
-        dens = ' '#'%8.3e' %ff['dens']
-        
-
-        ## Colour bar plotted
-
-        patches = []
-        color = []
-
-        for i in range(nzmax):
-            for j in range(nnmax):
-                if nzycheck[j,i,0]==1:
-                    xy = j-0.5,i-0.5
-
-                    rect = Rectangle(xy,1,1,)
-
-                    # abundance
-                    yab = nzycheck[j,i,1]
-                    if yab == 0:
-
-                        yab=1e-99
-
-
-                    col =log10(yab)
-
-                    patches.append(rect)
-                    color.append(col)
-
-
-        p = PatchCollection(patches, cmap=cmapa, norm=norma)
-        p.set_array(array(color))
-        p.set_zorder(1)
-        #ax1.add_collection(p)
-      #  cb = pl.colorbar(p)
-
-        # colorbar label
-      #  if profile == 'neutron':
-      #      cb.set_label('log$_{10}$(X)',fontsize='x-large')
-
-        # plot file name
-        graphname = 'abundance-flux-chart '+str(cycle)
-
-        # Add black frames for stable isotopes
-        if boxstable:
-            for i in range(len(self.stable_el)):
-                if i == 0:
-                    continue
-
-
-                tmp = self.stable_el[i]
-                try:
-                    zz= self.elements_names.index(tmp[0]) #charge
-                except:
-                    continue
-
-                for j in range(len(tmp)):
-                    if j == 0:
-                        continue
-
-                    nn = int(tmp[j]) #atomic mass
-                    nn=nn-zz
-
-                    xy = nn-0.5,zz-0.5
-                    rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=4.)
-                    rect.set_zorder(2)
-                    #ax1.add_patch(rect)
-
-
-
-
-        # decide which array to take for label positions
-        iarr = 0
-        #
-        # here below I read data from the flux_*****.DAT file.
-        #
-        file_name = 'flux_'+str(cycle).zfill(5)+'.DAT'
-        print(file_name)
-        f = open(file_name)
-        lines = f.readline()
-        lines = f.readlines()
-        f.close()
-
-        print_max_flux_in_plot =  False
-        # color map choice for fluxes
-        #cmapa = cm.jet
-        cmapa = cm.plasma
-        # color map choice for arrows
-        cmapr = cm.plasma
-        # starting point of arrow
-        coord_x_1 = []
-        coord_y_1 = []
-        # ending point of arrow (option 1)
-        coord_x_2 = []
-        coord_y_2 = []
-        # ending point of arrow (option 2)
-        coord_x_3 = []
-        coord_y_3 = []
-        # fluxes
-        flux_read = []
-        flux_log10 = []
-
-        if which_flux == None or which_flux == 0:
-            print('chart for nucleosynthesis fluxes [dYi/dt]')
-            line_to_read = 9
-        elif which_flux == 1:
-            print('chart for energy fluxes')
-            line_to_read = 10
-        elif which_flux > 1:
-            print("you have only option 0 or 1, not larger than 1")
-
-        single_line = []
-        for i in range(len(lines)):
-            single_line.append(lines[i].split())
-            coord_y_1.append(int(single_line[i][1]))
-            coord_x_1.append(int(single_line[i][2])-coord_y_1[i])
-            coord_y_2.append(int(single_line[i][5]))
-            coord_x_2.append(int(single_line[i][6])-coord_y_2[i])
-            coord_y_3.append(int(single_line[i][7]))
-            coord_x_3.append(int(single_line[i][8])-coord_y_3[i])
-            try:
-                flux_read.append(float(single_line[i][line_to_read]))
-            except ValueError: # this is done to avoid format issues like 3.13725-181...
-                flux_read.append(1.0E-99)
-            flux_log10.append(log10(flux_read[i]+1.0e-99))
-
-        print(file_name,' read!')
-
-        # I need to select smaller sample, with only fluxes inside plotaxis.
-        if plotaxis!=[0,0,0,0]:
-            coord_y_1_small=[]
-            coord_x_1_small=[]
-            coord_y_2_small=[]
-            coord_x_2_small=[]
-            coord_y_3_small=[]
-            coord_x_3_small=[]
-            flux_log10_small = []
-            for i in range(len(flux_log10)):
-                I_am_in = 0
-                if coord_y_1[i] > plotaxis[2] and coord_y_1[i] < plotaxis[3] and coord_x_1[i] > plotaxis[0] and coord_x_1[i] < plotaxis[1]:
-                    I_am_in = 1
-                    coord_y_1_small.append(int(coord_y_1[i]))
-                    coord_x_1_small.append(int(coord_x_1[i]))
-                    coord_y_2_small.append(int(coord_y_2[i]))
-                    coord_x_2_small.append(int(coord_x_2[i]))
-                    coord_y_3_small.append(int(coord_y_3[i]))
-                    coord_x_3_small.append(int(coord_x_3[i]))
-                    flux_log10_small.append(flux_log10[i])
-                if coord_y_3[i] > plotaxis[2] and coord_y_3[i] < plotaxis[3] and coord_x_3[i] > plotaxis[0] and coord_x_3[i] < plotaxis[1] and I_am_in == 0:
-                    I_am_in = 1
-                    coord_y_1_small.append(int(coord_y_1[i]))
-                    coord_x_1_small.append(int(coord_x_1[i]))
-                    coord_y_2_small.append(int(coord_y_2[i]))
-                    coord_x_2_small.append(int(coord_x_2[i]))
-                    coord_y_3_small.append(int(coord_y_3[i]))
-                    coord_x_3_small.append(int(coord_x_3[i]))
-                    flux_log10_small.append(flux_log10[i])
-
-
-
-        # elemental labels off/on [0/1]
-        ilabel = 1
-
-        # label for isotopic masses off/on [0/1]
-        imlabel = 1
-
-        # turn lines for magic numbers off/on [0/1]
-        imagic = 0
-
-        # flow is plotted over "prange" dex. If flow < maxflow-prange it is not plotted
-        if prange == None:
-            print('plot range given by default')
-            prange = 8.
-
-        #############################################
-        #print flux_log10_small
-        # we should scale prange on plot_axis range, not on max_flux!
-        max_flux = max(flux_log10)
-        ind_max_flux = flux_log10.index(max_flux)
-        if plotaxis!=[0,0,0,0]:
-            max_flux_small = max(flux_log10_small)
-
-        if plotaxis==[0,0,0,0]:
-            nzmax = int(max(max(coord_y_1),max(coord_y_2),max(coord_y_3)))+1
-            nnmax = int(max(max(coord_x_1),max(coord_x_2),max(coord_x_3)))+1
-            coord_x_1_small = coord_x_1
-            coord_x_2_small = coord_x_2
-            coord_x_3_small = coord_x_3
-            coord_y_1_small = coord_y_1
-            coord_y_2_small = coord_y_2
-            coord_y_3_small = coord_y_3
-            flux_log10_small= flux_log10
-            max_flux_small  = max_flux
-        else:
-            nzmax = int(max(max(coord_y_1_small),max(coord_y_2_small),max(coord_y_3_small)))+1
-            nnmax = int(max(max(coord_x_1_small),max(coord_x_2_small),max(coord_x_3_small)))+1
-
-        for i in range(nzmax):
-            for j in range(nnmax):
-                #print(i,j)
-                if nzycheck[j,i,0]==1:
-                 #   print(j,i)
-                    xy = j-0.5,i-0.5
-                    rect = Rectangle(xy,1,1,)
-                    patches.append(rect)
-
-
-        nzycheck = zeros([nnmax_plot,nzmax,3])
-        coord_x_out = zeros(len(coord_x_2_small), dtype='int')
-        coord_y_out = zeros(len(coord_y_2_small),dtype='int')
-        for i in range(len(flux_log10_small)):
-            nzycheck[coord_x_1_small[i],coord_y_1_small[i],0] = 1
-            nzycheck[coord_x_1_small[i],coord_y_1_small[i],1] = flux_log10_small[i]
-            if coord_x_2_small[i] >= coord_x_3_small[i]:
-                coord_x_out[i] = coord_x_2_small[i]
-                coord_y_out[i] = coord_y_2_small[i]
-                nzycheck[coord_x_out[i],coord_y_out[i],0] = 1
-                nzycheck[coord_x_out[i],coord_y_out[i],1] = flux_log10_small[i]
-            elif coord_x_2_small[i] < coord_x_3_small[i]:
-                coord_x_out[i] = coord_x_3_small[i]
-                coord_y_out[i] = coord_y_3_small[i]
-                nzycheck[coord_x_out[i],coord_y_out[i],0] = 1
-                nzycheck[coord_x_out[i],coord_y_out[i],1] = flux_log10_small[i]
-            if flux_log10_small[i]>max_flux_small-prange:
-                nzycheck[coord_x_1_small[i],coord_y_1_small[i],2] = 1
-                nzycheck[coord_x_out[i],coord_y_out[i],2] = 1
-
-        #### create plot
-        if profile == 'charged':
-            ax2 = fig.add_subplot(1, 1, 1)
-        elif profile == 'neutron':
-            ax2 = fig.add_subplot(1, 1, 1)
-        # Tick marks
+        fig = pl.figure(figsize=(xdim,ydim), dpi=100)
+        ax = pl.axes([0.10,0.10,0.85,0.8])
+        ax.set_aspect('equal')
         xminorlocator = MultipleLocator(1)
         xmajorlocator = MultipleLocator(5)
-        ax2.xaxis.set_major_locator(xmajorlocator)
-        ax2.xaxis.set_minor_locator(xminorlocator)
+        ax.xaxis.set_major_locator(xmajorlocator)
+        ax.xaxis.set_minor_locator(xminorlocator)
         yminorlocator = MultipleLocator(1)
         ymajorlocator = MultipleLocator(5)
-        ax2.yaxis.set_major_locator(ymajorlocator)
-        ax2.yaxis.set_minor_locator(yminorlocator)
-        ## define axis and plot style (colormap, size, fontsize etc.)
-        if plotaxis==[0,0,0,0]:
-            xdim=10
-            ydim=6
+        ax.yaxis.set_major_locator(ymajorlocator)
+        ax.yaxis.set_minor_locator(yminorlocator)
+
+        try:
+            cmapc = matplotlib.colormaps[cmap]
+        except AttributeError:
+            cmapc = cm.get_cmap(name=cmap)
+
+        floor = 10.0**threshold if threshold is not None else None
+        patches = []
+        values = []
+        result = {}
+        plotted = set()
+
+        for (n, z) in all_keys:
+            in_self = (n,z) in self_grid
+            in_other = (n,z) in other_grid
+            x_self = self_grid.get((n,z), 0.0)
+            x_other = other_grid.get((n,z), 0.0)
+            if floor is not None:
+                below_self = (not in_self) or x_self < floor
+                below_other = (not in_other) or x_other < floor
+                if below_self and below_other:
+                    continue
+            xy = n-0.5, z-0.5
+            if in_self and in_other:
+                xs = x_self if x_self > 0 else 1e-99
+                xo = x_other if x_other > 0 else 1e-99
+                val = (xs-xo)/xo if residual else log10(xs/xo)
+                rect = Rectangle(xy,1,1)
+                rect.set_zorder(2)
+                patches.append(rect)
+                values.append(val)
+                result[(n,z)] = val
+            else:
+                rect = Rectangle(xy,1,1, facecolor='0.85', edgecolor='k', hatch='//')
+                rect.set_zorder(1)
+                ax.add_patch(rect)
+            plotted.add((n,z))
+
+        if values:
+            # max(list), not max(a,b,c) -- see _draw_magic_lines note
+            vext = max([abs(min(values)), abs(max(values)), 1e-6])
         else:
-            dx = plotaxis[1]-plotaxis[0]
-            dy = plotaxis[3]-plotaxis[2]
-            ydim = 6
-            xdim = ydim*dx/dy
+            vext = 1.
+        norm = colors.TwoSlopeNorm(vcenter=0, vmin=-vext, vmax=vext)
+        p = PatchCollection(patches, cmap=cmapc, norm=norm)
+        p.set_array(array(values))
+        ax.add_collection(p)
+        cb = pl.colorbar(p)
+        cb.set_label('(X-X$_{ref}$)/X$_{ref}$' if residual else 'log$_{10}$(X / X$_{ref}$)')
 
-        format = 'pdf'
-        # set x- and y-axis scale aspect ratio to 1
-        #ax2.set_aspect('equal')
-
-        # Add black frames for stable isotopes
-        # Add black frames for stable isotopes
         if boxstable:
-            for i in range(len(self.stable_el)):
-                if i == 0:
-                    continue
+            self._draw_stable_boxes(ax, lw=3.)
 
+        nnmax = max([k[0] for k in plotted])+1
+        nzmax = max([k[1] for k in plotted])+1
+        grid_display = zeros([nnmax, nzmax, 1])
+        for (n,z) in plotted:
+            grid_display[n,z,0] = 1
 
-                tmp = self.stable_el[i]
-                try:
-                    zz= self.elements_names.index(tmp[0]) #charge
-                except:
-                    continue
-
-                for j in range(len(tmp)):
-                    if j == 0:
-                        continue
-
-                    nn = int(tmp[j]) #atomic mass
-                    nn=nn-zz
-
-                    xy = nn-0.5,zz-0.5
-                    rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=4.)
-                    rect.set_zorder(2)
-                    ax2.add_patch(rect)
-
-
-        apatches = []
-        acolor = []
-        m = old_div(0.8,prange)
-        vmax=ceil(max(flux_log10_small))
-        vmin=max(flux_log10_small)-prange
-        b=-vmin*m+0.1
-        normr = colors.Normalize(vmin=vmin,vmax=vmax)
-        ymax=0.
-        xmax=0.
-
-        for i in range(len(flux_log10_small)):
-            x = coord_x_1_small[i]
-            y = coord_y_1_small[i]
-            dx = coord_x_out[i]-coord_x_1_small[i]
-            dy = coord_y_out[i]-coord_y_1_small[i]
-            if flux_log10_small[i]>=vmin:
-                arrowwidth = flux_log10_small[i]*m+b
-                arrow = Arrow(x,y,dx,dy, width=arrowwidth)
-                if xmax<x:
-                    xmax=x
-                if ymax<y:
-                    ymax=y
-                acol = flux_log10_small[i]
-                apatches.append(arrow)
-                acolor.append(acol)
-            xy = x-0.5,y-0.5
-            rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=1.)
-            patches.append(rect)
-            xy = x+dx-0.5,y+dy-0.5
-            rect = Rectangle(xy,1,1,ec='k',fc='None',fill='False',lw=1.)
-            patches.append(rect)
-
-
-        p = PatchCollection(patches,norm=0,facecolor='w')
-        p.set_zorder(1)
-        ax2.add_collection(p)
-
-
-
-
-        a = PatchCollection(apatches, cmap=cmapr, norm=normr,edgecolors='black',linewidths=1,alpha=alpha)
-        a.set_array(array(acolor))
-        a.set_zorder(3)
-        ax2.add_collection(a)
-        cb = pl.colorbar(a)
-
-        # colorbar label
-        #cb.set_label('log$_{10}$($x$)',fontsize='x-large')
-        if profile == 'neutron':
-            cb.set_label('log$_{10}$(f)',fontsize='x-large')
-
-        # decide which array to take for label positions
-        iarr = 2
-
-        # plot element labels
-        for z in range(nzmax):
-            try:
-                nmin = min(argwhere(nzycheck_plot[:,z,iarr-2]))[0]-1
-                nmax = max(argwhere(nzycheck_plot[:,z,iarr-2]))[0]+1
-                ax2.text(nmin,z,elname[z],horizontalalignment='center',verticalalignment='center',fontsize='medium',clip_on=True)
-                ax2.text(nmax,z,elname[z],horizontalalignment='center',verticalalignment='center',fontsize='medium',clip_on=True)
-            except ValueError:
-                continue
-
-        # plot mass numbers
-        if imlabel:
+        elname = self.elements_names
+        if ilabel:
             for z in range(nzmax):
-                for n in range(nnmax_plot):
-                    a = z+n
-                    if nzycheck_plot[n,z,iarr-2]==1:
-                        ax2.text(n,z,a,horizontalalignment='center',verticalalignment='center',fontsize='xx-small',clip_on=True)
+                try:
+                    nmin = argwhere(grid_display[:,z,0]).min()-1
+                    ax.text(nmin,z,elname[z],horizontalalignment='center',verticalalignment='center',
+                            fontsize='x-small',clip_on=True)
+                except ValueError:
+                    continue
+        if imlabel:
+            for (n,z) in plotted:
+                ax.text(n,z,n+z,horizontalalignment='center',verticalalignment='center',
+                        fontsize=8,clip_on=True)
+        if imagic:
+            self._draw_magic_lines(ax, grid_display, iarr=0)
 
-        # plot lines at magic numbers
-        if imagic==1:
-            ixymagic=[2, 8, 20, 28, 50, 82, 126]
-            nmagic = len(ixymagic)
-            for magic in ixymagic:
-                if magic<=nzmax:
-                    try:
-                        xnmin = min(argwhere(nzycheck[:,magic,iarr-2]))[0]
-                        xnmax = max(argwhere(nzycheck[:,magic,iarr-2]))[0]
-                        line = ax2.plot([xnmin,xnmax],[magic,magic],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
-                if magic<=nnmax:
-                    try:
-                        yzmin = min(argwhere(nzycheck[magic,:,iarr-2]))[0]
-                        yzmax = max(argwhere(nzycheck[magic,:,iarr-2]))[0]
-                        line = ax2.plot([magic,magic],[yzmin,yzmax],lw=3.,color='r',ls='-')
-                    except ValueError:
-                        dummy=0
-
-        # set axis limits
         if plotaxis==[0,0,0,0]:
-            ax2.axis([-0.5,xmax+0.5,-0.5,ymax+0.5])
+            xmax = max([k[0] for k in plotted])
+            ymax = max([k[1] for k in plotted])
+            ax.axis([-0.5,xmax+0.5,-0.5,ymax+0.5])
         else:
-            ax2.axis(plotaxis)
+            ax.axis(plotaxis)
 
-        # set x- and y-axis label
-        ax2.set_xlabel('Neutron number',fontsize='xx-large')
-        if profile == 'neutron':
-            ax2.set_ylabel('Proton number',fontsize='xx-large')
-        if which_flux == None or which_flux == 0:
-            max_flux_label="max flux = "+str('{0:.4f}'.format(max_flux))
-        elif which_flux == 1:
-            max_flux_label="max energy flux = "+str('{0:.4f}'.format(max_flux))
-        if print_max_flux_in_plot:
-            ax2.text(plotaxis[1]-1.8,plotaxis[2]+0.1,max_flux_label,fontsize=10.)
+        ax.set_xlabel('neutron number (A-Z)')
+        ax.set_ylabel('proton number Z')
+        other_label = other_cycle if other_cycle is not None else cycle
+        pl.title('Abundance ratio chart, cycle {} vs cycle {}'.format(cycle, other_label))
 
-        #fig.savefig(graphname)
-        print(graphname,'is done')
+        if savefig:
+            graphname = 'abundance-ratio-chart'+str(cycle)
+            if path is not None:
+                graphname = os.path.join(path, graphname)
+            fig.savefig(graphname)
+            print(graphname,'is done')
         if show:
             pl.show()
         if turnoff:
             ion()
-        return    
+
+        return result
+
+    def abu_evolution_classify(self, cycle_start=None, cycle_end=None,
+                                floor=1e-10, factor=10.0, plot=True,
+                                boxstable=True, plotaxis=[0,0,0,0],
+                                show=True, savefig=False, path=None):
+        '''
+        Classify isotopes as created, destroyed, enhanced, or depleted
+        between two cycles of this run (default: the first and last
+        available cycle, i.e. the full evolution), based on an
+        explicit numeric criterion:
+
+        - created:   abundance <= floor at cycle_start, > floor at cycle_end
+        - destroyed: abundance > floor at cycle_start, <= floor at cycle_end
+        - enhanced:  > floor at both, and increases by >= `factor`
+        - depleted:  > floor at both, and decreases by >= `factor`
+        - anything else is left unclassified (not returned/plotted)
+
+        Parameters
+        ----------
+        cycle_start, cycle_end : integer, optional
+            Cycles to compare. Default to the first/last cycle
+            available via `self.get('mod')`.
+        floor : float, optional
+            Abundance below which an isotope is considered absent. The
+            default is 1e-10.
+        factor : float, optional
+            Multiplicative change (X_end/X_start) above which an
+            isotope present at both cycles counts as "enhanced" (or
+            below 1/factor for "depleted"). The default is 10 (one
+            order of magnitude).
+        plot : boolean, optional
+            Whether to also draw an (N,Z) grid chart, discretely
+            coloured by category, with a legend. The default is True.
+        boxstable, plotaxis, show, savefig, path : as in `abu_chart`.
+
+        Returns
+        -------
+        dict {'created': [...], 'destroyed': [...], 'enhanced': [...],
+              'depleted': [...]}, each a list of isotope name strings
+              (e.g. 'C-13').
+        '''
+        mp = self.get('mod')
+        if cycle_start is None:
+            cycle_start = min(mp)
+        if cycle_end is None:
+            cycle_end = max(mp)
+
+        start_grid = self._abu_grid(cycle_start)
+        end_grid = self._abu_grid(cycle_end)
+        all_keys = set(start_grid) | set(end_grid)
+
+        categories = {'created': [], 'destroyed': [], 'enhanced': [], 'depleted': []}
+        category_keys = {'created': [], 'destroyed': [], 'enhanced': [], 'depleted': []}
+        for key in all_keys:
+            x0 = start_grid.get(key, 0.0)
+            x1 = end_grid.get(key, 0.0)
+            if x0 <= floor and x1 > floor:
+                cat = 'created'
+            elif x0 > floor and x1 <= floor:
+                cat = 'destroyed'
+            elif x0 > floor and x1 > floor and x1/x0 >= factor:
+                cat = 'enhanced'
+            elif x0 > floor and x1 > floor and x1/x0 <= 1.0/factor:
+                cat = 'depleted'
+            else:
+                continue
+            n, z = key
+            categories[cat].append(self._isotope_name(n, z))
+            category_keys[cat].append(key)
+
+        if plot:
+            turnoff = False
+            if not show:
+                try:
+                    ioff()
+                    turnoff = True
+                except NameError:
+                    turnoff = False
+
+            cat_colors = OrderedDict([
+                ('created', 'gold'), ('enhanced', 'crimson'),
+                ('depleted', 'steelblue'), ('destroyed', 'black'),
+            ])
+
+            if plotaxis==[0,0,0,0]:
+                xdim=10
+                ydim=6
+            else:
+                dx = plotaxis[1]-plotaxis[0]
+                dy = plotaxis[3]-plotaxis[2]
+                ydim = 6
+                xdim = ydim*dx/dy
+
+            fig = pl.figure(figsize=(xdim,ydim), dpi=100)
+            ax = pl.axes([0.10,0.10,0.85,0.8])
+            ax.set_aspect('equal')
+            xminorlocator = MultipleLocator(1)
+            xmajorlocator = MultipleLocator(5)
+            ax.xaxis.set_major_locator(xmajorlocator)
+            ax.xaxis.set_minor_locator(xminorlocator)
+            yminorlocator = MultipleLocator(1)
+            ymajorlocator = MultipleLocator(5)
+            ax.yaxis.set_major_locator(ymajorlocator)
+            ax.yaxis.set_minor_locator(yminorlocator)
+
+            plotted_keys = []
+            for cat, colour in cat_colors.items():
+                for (n,z) in category_keys[cat]:
+                    rect = Rectangle((n-0.5,z-0.5),1,1, facecolor=colour, edgecolor='k')
+                    rect.set_zorder(2)
+                    ax.add_patch(rect)
+                    plotted_keys.append((n,z))
+
+            if boxstable:
+                self._draw_stable_boxes(ax, lw=3.)
+
+            if plotaxis==[0,0,0,0] and plotted_keys:
+                xmax = max([k[0] for k in plotted_keys])
+                ymax = max([k[1] for k in plotted_keys])
+                ax.axis([-0.5,xmax+0.5,-0.5,ymax+0.5])
+            elif plotaxis!=[0,0,0,0]:
+                ax.axis(plotaxis)
+
+            ax.set_xlabel('neutron number (A-Z)')
+            ax.set_ylabel('proton number Z')
+            pl.title('Isotope evolution, cycle {} to {}'.format(cycle_start, cycle_end))
+
+            legend_handles = [Rectangle((0,0),1,1, facecolor=c, edgecolor='k')
+                               for c in cat_colors.values()]
+            ax.legend(legend_handles, list(cat_colors.keys()), loc='upper left', fontsize='small')
+
+            if savefig:
+                graphname = 'abu-evolution-classify-{}-{}'.format(cycle_start, cycle_end)
+                if path is not None:
+                    graphname = os.path.join(path, graphname)
+                fig.savefig(graphname)
+                print(graphname,'is done')
+            if show:
+                pl.show()
+            if turnoff:
+                ion()
+
+        return categories
+
     def iso_abundMulti(self, cyclist, stable=False, amass_range=None,
                        mass_range=None, ylim=[0,0], ref=-1,
                        decayed=False, include_title=False, title=None,
@@ -3121,8 +2876,12 @@ class NuPlotMixin(PlotCommon):
             pl_index+=1
             if pl_index > 4:
                 pl_index = 0
-            ylim1=min(ylim1,min(a_dum))
-            ylim2=max(ylim2,max(a_dum))
+            # max([a,b]), not max(a,b) -- see _draw_magic_lines note:
+            # this module's `from numpy import *` shadows the builtins,
+            # and numpy's min/max(a, b) treats `b` as `axis`, not a
+            # second value to compare.
+            ylim1=min([ylim1,min(a_dum)])
+            ylim2=max([ylim2,max(a_dum)])
 
             if mov:
                 artists.extend([artist1,artist2])
@@ -3133,11 +2892,11 @@ class NuPlotMixin(PlotCommon):
             ylim1 = ylim1 -dylim
             ylim2 = ylim2 +dylim
             if ref is not -1:
-                ylim2 = min(ylim2,4)
-                ylim1 = max(ylim1,-4)
+                ylim2 = min([ylim2,4])
+                ylim1 = max([ylim1,-4])
             else:
-                ylim2 = min(ylim2,0.2)
-                ylim1 = max(ylim1,-13)
+                ylim2 = min([ylim2,0.2])
+                ylim1 = max([ylim1,-13])
         else:
             ylim1 = ylim1 *0.8
             ylim2 = ylim2 *1.1
@@ -3341,7 +3100,7 @@ class NuPlotMixin(PlotCommon):
         self.el_abu_log  : array of log10 of elemental abundance as plotted, including any ref scaling
         '''
         #from . import utils
-        from . import ascii_table as asci
+        from .. import ascii_table as asci
         plotType=self._classTest()
         offset=0
         if ref_filename!=None:
@@ -3371,7 +3130,7 @@ class NuPlotMixin(PlotCommon):
             self.el_name     = el_name
             # if we have provided a solar abundance file
             if ref==-2:
-                from . import utils
+                from .. import utils
                 utils.solar(ref_filename,1)
                 el_abu_sun=np.array(utils.solar_elem_abund)
                 el_abu_plot=np.zeros(len(el_abu))
@@ -3566,8 +3325,8 @@ class NuPlotMixin(PlotCommon):
             if title_items is not None:
                 pl.title(self._do_title_string(title_items,cycle))
             if ylim[0]==0 and ylim[1]==0:
-                ylim[0]=max(-15.0,min(np.log10(el_abu)+offset))
-                ylim[1]=max(ylim[0]+1.0,max(np.log10(el_abu)+offset))
+                ylim[0]=max([-15.0,min(np.log10(el_abu)+offset)])
+                ylim[1]=max([ylim[0]+1.0,max(np.log10(el_abu)+offset)])
             pl.ylim(ylim[0],ylim[1])
             pl.xlabel('Z')
             #pl.legend()
@@ -3604,7 +3363,7 @@ class NuPlotMixin(PlotCommon):
                 el_abu_plot=el_abu
                 ylab='log mass fraction'
             elif ref==1:
-                from . import utils
+                from .. import utils
                 if ref_filename=='':
                     raise IOError('You chose to plot relative to the solar abundance dist. However, you did not supply the solar abundance file!')
                 else:
@@ -3652,8 +3411,8 @@ class NuPlotMixin(PlotCommon):
             if title_items is not None:
                 pl.title(self._do_title_string(title_items,cycle))
             if ylim[0]==0 and ylim[1]==0:
-                ylim[0]=max(-15.0,min(np.log10(el_abu_plot)))
-                ylim[1]=max(ylim[0]+1.0,max(np.log10(el_abu_plot)))
+                ylim[0]=max([-15.0,min(np.log10(el_abu_plot))])
+                ylim[1]=max([ylim[0]+1.0,max(np.log10(el_abu_plot))])
             pl.ylim(ylim[0],ylim[1])
             pl.xlabel('Z')
             pl.ylabel(ylab)

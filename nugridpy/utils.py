@@ -446,8 +446,11 @@ class Utils(object):
             if a_iso_to_plot[i] <= 209 and stable_a <=209:  # Bi209 is last stable element
                 stable_mass_numbers=self.stable_el[self.stable_names.index(element_name)][1:]
                 iso_db_index_range_el=np.where(el_db==element_name)
+                # [0] before int(): modern numpy no longer implicitly
+                # converts a length-1 array via int(), only a true
+                # 0-d/scalar.
                 beta_for_this_species=\
-                    int(beta[iso_db_index_range_el][np.where(a_db[iso_db_index_range_el]==a_iso_to_plot[i])])
+                    int(beta[iso_db_index_range_el][np.where(a_db[iso_db_index_range_el]==a_iso_to_plot[i])][0])
                 if beta_for_this_species == 0:  # if there are no stable species for an element (Tc,Pm) the cutoff specifies
                     beta_for_this_species = -1  # the lowest mass beta- isotope
                 if a_iso_to_plot[i] in stable_mass_numbers:
@@ -474,8 +477,11 @@ class Utils(object):
                         if a_iso_to_plot[i] in stable_mass_numbers:
                             ind_range=np.where(np.array(el_iso_to_plot)==try_target_el)[0]
                             if a_iso_to_plot[i] in np.array(a_iso_to_plot)[ind_range]:
+                                # [0] before assigning into the scalar
+                                # slot below: modern numpy no longer
+                                # implicitly converts a length-1 array.
                                 this_ind=\
-                                    ind_range[np.where(np.array(a_iso_to_plot)[ind_range]==a_iso_to_plot[i])[0]]
+                                    ind_range[np.where(np.array(a_iso_to_plot)[ind_range]==a_iso_to_plot[i])[0]][0]
                                 # print isotope_to_plot[i]+" is unstable and decays to "+isotope_to_plot[this_ind]
                                 decay_index_pointer[i]=this_ind
                             else:

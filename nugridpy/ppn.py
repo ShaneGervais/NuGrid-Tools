@@ -188,7 +188,10 @@ class xtime(NuPlotMixin):
             v=lines[i].split()
             vv=array(v,dtype='float')
             data.append(vv)
-        ilines=i
+        # i+1, not i: i is the last loop index (len(lines)-1), not the
+        # count -- using it directly silently dropped the final time
+        # step for every file, and crashed (0 count) for a 1-row file.
+        ilines=i+1
         print("There are "+str(ilines)+" time steps found.")
         return data,col_num,cols,col_tot,ilines
 
