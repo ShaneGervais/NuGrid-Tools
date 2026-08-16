@@ -1023,7 +1023,7 @@ class NuPlotMixin(PlotCommon):
     def abu_chartMulti(self, cyclist, mass_range=None, ilabel=True,
                        imlabel=True, imlabel_fontsize=8, imagic=False,
                        boxstable=True, lbound=20, plotaxis=[0,0,0,0],
-                       color_map='jet', single_colour=None, threshold=None,
+                       color_map='viridis', single_colour=None, threshold=None,
                        pdf=False, title=None, path=None):
         '''
         Method that plots abundence chart and saves those figures to a
@@ -1060,7 +1060,7 @@ class NuPlotMixin(PlotCommon):
         color_map : string, optional
             Color map according to choices in matplotlib
             (e.g. www.scipy.org/Cookbook/Matplotlib/Show_colormaps).
-            The default is 'jet'.
+            The default is 'viridis'.
         single_colour : matplotlib colour spec, optional
             If given, every plotted isotope is filled with this flat
             colour instead of being coloured by abundance (no colorbar
@@ -1106,7 +1106,7 @@ class NuPlotMixin(PlotCommon):
     def abu_chart(self, cycle, mass_range=None ,ilabel=True,
                   imlabel=True, imlabel_fontsize=8, imagic=False,
                   boxstable=True, lbound=(-12, 0),
-                  plotaxis=[0, 0, 0, 0], show=True, color_map='jet',
+                  plotaxis=[0, 0, 0, 0], show=True, color_map='viridis',
                   ifig=None,data_provided=False,thedata=None,
                   savefig=False,drawfig=None,drawax=None,mov=False,
                   path=None, single_colour=None, threshold=None):
@@ -1151,7 +1151,7 @@ class NuPlotMixin(PlotCommon):
         color_map : string, optional
             Color map according to choices in matplotlib
             (e.g. www.scipy.org/Cookbook/Matplotlib/Show_colormaps).
-            The default is 'jet'.
+            The default is 'viridis'.
         ifig : integer, optional
             Figure number, if ifig is None it wiil be set to the cycle
             number.  The defaults is None.

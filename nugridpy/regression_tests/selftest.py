@@ -54,6 +54,38 @@ class TestModuleImports(unittest.TestCase):
     def test_import_sensitivity(self):
         import nugridpy.nu_plots.sensitivity
 
+    def test_import_styles(self):
+        import nugridpy.styles
+
+
+class TestStyles(unittest.TestCase):
+
+    def test_use_latex_style_sets_expected_rcparams(self):
+        from nugridpy.styles import use_latex_style, reset_style
+        previous = use_latex_style()
+        try:
+            self.assertEqual(matplotlib.rcParams['mathtext.fontset'], 'cm')
+            self.assertEqual(matplotlib.rcParams['font.family'], ['serif'])
+            self.assertFalse(matplotlib.rcParams['text.usetex'])
+        finally:
+            reset_style(previous)
+
+    def test_use_latex_style_usetex_opt_in(self):
+        from nugridpy.styles import use_latex_style, reset_style
+        previous = use_latex_style(usetex=True)
+        try:
+            self.assertTrue(matplotlib.rcParams['text.usetex'])
+        finally:
+            reset_style(previous)
+
+    def test_reset_style_restores_previous_rcparams(self):
+        from nugridpy.styles import use_latex_style, reset_style
+        original_fontset = matplotlib.rcParams['mathtext.fontset']
+        previous = use_latex_style()
+        reset_style(previous)
+        self.assertEqual(matplotlib.rcParams['mathtext.fontset'], original_fontset)
+
+
 class TestPlotMixinComposition(unittest.TestCase):
 
     def test_data_plot_shim_aliases_plot_common(self):
@@ -476,53 +508,60 @@ class TestRealSeData(unittest.TestCase):
 
 class TestAbuChart(unittest.TestCase):
 
+    # Bundled locally under regression_tests/data/ppn_Hburn_simple/ (see
+    # that directory's provenance note) instead of wget-ing from the CADC
+    # VOspace, so these tests have no network dependency.
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'data', 'ppn_Hburn_simple')
+
     def test_abu_chart(self):
         from nugridpy import utils,ppn,data_plot
         import matplotlib
         matplotlib.use('agg')
         import matplotlib.pylab as mpy
         import os
+        import shutil
 
         # Perform tests within temporary directory
         with TemporaryDirectory() as tdir:
-            # wget the data for a ppn run from the CADC VOspace
-            n = 3
-            for cycle in range(0,n):
-                cycle_str = str(cycle).zfill(2)
-                os.system("wget -q --content-disposition --directory '" + tdir + "' "
-                          + "'http://www.canfar.phys.uvic.ca/vospace/synctrans?TARGET="\
-                          + "vos%3A%2F%2Fcadc.nrc.ca%21vospace%2Fnugrid%2Fdata%2Fprojects%2Fppn%2Fexamples%2F"\
-                          + "ppn_Hburn_simple%2Fiso_massf000" + cycle_str + ".DAT&DIRECTION=pullFromVoSpace&PROTOCOL"\
-                          + "=ivo%3A%2F%2Fivoa.net%2Fvospace%2Fcore%23httpget'")
+            for fname in os.listdir(self.DATA_DIR):
+                if fname.startswith('iso_massf'):
+                    shutil.copy(os.path.join(self.DATA_DIR, fname),
+                                os.path.join(tdir, fname))
 
-            # test_data_dir should point to the correct location of a set of abundances data file
-            #nugrid_dir= os.path.dirname(os.path.dirname(ppn.__file__))
-            #NuPPN_dir= nugrid_dir + "/NuPPN"
-            #test_data_dir= NuPPN_dir + "/examples/ppn_C13_pocket/master_results"
+            cwd = os.getcwd()
+            os.chdir(tdir)
+            try:
+                p=ppn.abu_vector(tdir) # TODO: this function fails to raise an exception if path is not found!
+                mp=p.get('mod')
+                if len(mp) == 0:
+                    raise IOError("Cannot locate a set of abundance data files")
+                sparse=10
+                cycles=mp[:1000:sparse]
+                form_str='%6.1F'
+                form_str1='%4.3F'
 
-            p=ppn.abu_vector(tdir) # TODO: this function fails to raise an exception if path is not found!
-            mp=p.get('mod')
-            if len(mp) == 0:
-                raise IOError("Cannot locate a set of abundance data files")
-            sparse=10
-            cycles=mp[:1000:sparse]
-            form_str='%6.1F'
-            form_str1='%4.3F'
-
-            i=0
-            for cyc in cycles:
-                T9  = p.get('t9',fname=cyc)
-                Rho = p.get('rho',fname=cyc)
-                mod = p.get('mod',fname=cyc)
-                # time= p.get('agej',fname=cyc)*utils.constants.one_year
-                time= p.get('agej',fname=cyc)
-                mpy.close(i);mpy.figure(i);i += 1
-                p.abu_chart(cyc,mass_range=[0,41],plotaxis=[-1,22,-1,22],lbound=(-6,0),show=False)
-                mpy.title(str(mod)+' t='+form_str%time+'yr $T_9$='+form_str1%T9+' $\\rho$='+str(Rho))
-                png_file='abu_chart_'+str(cyc).zfill(len(str(max(mp))))+'.png'
-                mpy.savefig(png_file)
-                self.assertTrue(os.path.exists(png_file))
-                os.remove(png_file)
+                i=0
+                for cyc in cycles:
+                    T9  = p.get('t9',fname=cyc)
+                    Rho = p.get('rho',fname=cyc)
+                    mod = p.get('mod',fname=cyc)
+                    # time= p.get('agej',fname=cyc)*utils.constants.one_year
+                    time= p.get('agej',fname=cyc)
+                    mpy.close(i);mpy.figure(i);i += 1
+                    p.abu_chart(cyc,mass_range=[0,41],plotaxis=[-1,22,-1,22],lbound=(-6,0),show=False)
+                    mpy.title(str(mod)+' t='+form_str%time+'yr $T_9$='+form_str1%T9+' $\\rho$='+str(Rho))
+                    png_file='abu_chart_'+str(cyc).zfill(len(str(max(mp))))+'.png'
+                    mpy.savefig(png_file)
+                    self.assertTrue(os.path.exists(png_file))
+                    os.remove(png_file)
+                # Close figures so their (recycled) numbers don't collide
+                # with, and corrupt the size of, figures opened by other
+                # tests later in the same process (e.g. ImageCompare,
+                # which also plots into figure 0).
+                mpy.close('all')
+            finally:
+                os.chdir(cwd)
 
 
     def test_abu_evolution(self):
@@ -531,34 +570,33 @@ class TestAbuChart(unittest.TestCase):
         matplotlib.use('agg')
         import matplotlib.pylab as mpy
         import os
+        import shutil
 
         # Perform tests within temporary directory
         with TemporaryDirectory() as tdir:
-            # wget the data for a ppn run from the CADC VOspace
-            os.system("wget -q --content-disposition --directory '" + tdir +  "' "\
-                          + "'http://www.canfar.phys.uvic.ca/vospace/synctrans?TARGET="\
-                          + "vos%3A%2F%2Fcadc.nrc.ca%21vospace%2Fnugrid%2Fdata%2Fprojects%2Fppn%2Fexamples%2F"\
-                          + "ppn_Hburn_simple%2Fx-time.dat&DIRECTION=pullFromVoSpace&PROTOCOL"\
-                          + "=ivo%3A%2F%2Fivoa.net%2Fvospace%2Fcore%23httpget'")
+            shutil.copy(os.path.join(self.DATA_DIR, 'x-time.dat'),
+                        os.path.join(tdir, 'x-time.dat'))
 
-            #nugrid_dir= os.path.dirname(os.path.dirname(ppn.__file__))
-            #NuPPN_dir= nugrid_dir + "/NuPPN"
-            #test_data_dir= NuPPN_dir + "/examples/ppn_Hburn_simple/RUN_MASTER"
-
-            symbs=utils.symbol_list('lines2')
-            x=ppn.xtime(tdir)
-            specs=['PROT','HE  4','C  12','N  14','O  16']
-            i=0
-            for spec in specs:
-                x.plot('time',spec,logy=True,logx=True,shape=utils.linestyle(i)[0],show=False,title='')
-                i += 1
-            mpy.ylim(-5,0.2)
-            mpy.legend(loc=0)
-            mpy.xlabel('$\log t / \mathrm{min}$')
-            mpy.ylabel('$\log X \mathrm{[mass fraction]}$')
-            abu_evol_file = 'abu_evolution.png'
-            mpy.savefig(abu_evol_file)
-            self.assertTrue(os.path.exists(abu_evol_file))
+            cwd = os.getcwd()
+            os.chdir(tdir)
+            try:
+                symbs=utils.symbol_list('lines2')
+                x=ppn.xtime(tdir)
+                specs=['PROT','HE  4','C  12','N  14','O  16']
+                i=0
+                for spec in specs:
+                    x.plot('time',spec,logy=True,logx=True,shape=utils.linestyle(i)[0],show=False,title='')
+                    i += 1
+                mpy.ylim(-5,0.2)
+                mpy.legend(loc=0)
+                mpy.xlabel('$\log t / \mathrm{min}$')
+                mpy.ylabel('$\log X \mathrm{[mass fraction]}$')
+                abu_evol_file = 'abu_evolution.png'
+                mpy.savefig(abu_evol_file)
+                self.assertTrue(os.path.exists(abu_evol_file))
+                mpy.close('all')
+            finally:
+                os.chdir(cwd)
 
 
 class ImageCompare(unittest.TestCase):
