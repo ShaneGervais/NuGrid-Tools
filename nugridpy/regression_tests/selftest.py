@@ -57,6 +57,9 @@ class TestModuleImports(unittest.TestCase):
     def test_import_styles(self):
         import nugridpy.styles
 
+    def test_import_network_audit(self):
+        import nugridpy.nu_plots.network_audit
+
 
 class TestStyles(unittest.TestCase):
 
@@ -356,6 +359,231 @@ class TestNetwork(unittest.TestCase):
         # an isotope absent from every reaction here: O-16 (Z=8, A=16)
         o16 = network.reactions_for_isotope(reactions, z=8, a=16)
         self.assertEqual(o16, [])
+
+
+class TestPhysicsInputParsing(unittest.TestCase):
+    '''
+    Covers nu_plots.network's parse_ppn_physics_input/
+    parse_isotopedatabase against real ppn_physics.input files from 4
+    actual NuPPN test runs (a baseline, one with an expanded isotope
+    database, one with all VITAL reactions turned off, and one with
+    all VITAL isotopes+reactions turned off) plus a real
+    isotopedatabase.txt excerpt -- these bundled fixtures are what
+    surfaced the findings behind nu_plots.network_audit, so parsing
+    them correctly here is directly load-bearing for those tests too.
+    '''
+
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'data', 'ppn_physics_input')
+    ELEMENTS_NAMES = None  # set in setUpClass
+
+    @classmethod
+    def setUpClass(cls):
+        from nugridpy.utils import Utils
+        cls.ELEMENTS_NAMES = Utils.elements_names
+
+    def test_parse_baseline(self):
+        from nugridpy.nu_plots import network
+        path = os.path.join(self.DATA_DIR, 'test_0_ppn_physics.input')
+        isotopes, reactions = network.parse_ppn_physics_input(path, self.ELEMENTS_NAMES)
+
+        self.assertEqual(len(isotopes), 55)
+        self.assertEqual(len(reactions), 117)
+        self.assertEqual(sum(1 for i in isotopes if i.active), 47)
+        self.assertEqual(sum(1 for r in reactions if r.active), 63)
+        self.assertTrue(all(r.source == 'VITAL' for r in reactions))
+
+        neut = next(i for i in isotopes if i.index == 1)
+        self.assertEqual((neut.name, neut.a, neut.z, neut.active), ('NEUT', 1, 0, True))
+
+        r1 = next(r for r in reactions if r.index == 1)
+        self.assertTrue(r1.active)
+        self.assertEqual((r1.reactant.z, r1.reactant.a), (1, 1))    # PROT
+        # ppn_physics.input's own column order for this row -- unlike
+        # networksetup.txt's equivalent row, the real product (H-2)
+        # is in the product2 slot here, product1 is the untracked
+        # placeholder (OOOOO); confirmed against the raw file, not
+        # assumed from the other table's convention.
+        self.assertEqual((r1.product1.z, r1.product1.a), (0, 0))   # OOOOO
+        self.assertEqual((r1.product2.z, r1.product2.a), (1, 2))   # H-2
+        self.assertEqual(r1.reaction_type, '(p,g)')
+
+    def test_parse_vital_reac_off(self):
+        from nugridpy.nu_plots import network
+        path = os.path.join(self.DATA_DIR, 'test_vital_reac_off_ppn_physics.input')
+        isotopes, reactions = network.parse_ppn_physics_input(path, self.ELEMENTS_NAMES)
+
+        # Reactions all off, isotopes untouched -- the "safe" direction.
+        self.assertEqual(sum(1 for r in reactions if r.active), 0)
+        self.assertEqual(sum(1 for i in isotopes if i.active), 47)
+
+    def test_parse_vital_iso_reac_off(self):
+        from nugridpy.nu_plots import network
+        path = os.path.join(self.DATA_DIR, 'test_vital_iso_reac_off_ppn_physics.input')
+        isotopes, reactions = network.parse_ppn_physics_input(path, self.ELEMENTS_NAMES)
+
+        # Both off -- the configuration that silently collapsed the network.
+        self.assertEqual(sum(1 for r in reactions if r.active), 0)
+        self.assertEqual(sum(1 for i in isotopes if i.active), 0)
+
+    def test_parse_isotopedatabase(self):
+        from nugridpy.nu_plots import network
+        path = os.path.join(self.DATA_DIR, 'isotopedatabase_excerpt.txt')
+        isotopes = network.parse_isotopedatabase(path)
+
+        self.assertEqual(len(isotopes), 100)
+        neutron = isotopes[0]
+        self.assertEqual((neutron.z, neutron.a, neutron.name, neutron.active), (0, 1, 'nn', True))
+        # Li-6 is the one inactive (F) row near the top of the real file.
+        li6 = next(i for i in isotopes if i.z == 3 and i.a == 6)
+        self.assertFalse(li6.active)
+
+
+class TestNetworkAudit(unittest.TestCase):
+    '''
+    Covers nu_plots.network_audit against the same 4 real
+    ppn_physics.input configs, plus the real healthy-vs-collapsed
+    iso_massf output that revealed the silent-network-collapse failure
+    mode this module is meant to catch.
+    '''
+
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'data', 'ppn_physics_input')
+    ELEMENTS_NAMES = None
+
+    @classmethod
+    def setUpClass(cls):
+        from nugridpy.utils import Utils
+        cls.ELEMENTS_NAMES = Utils.elements_names
+
+    def _parse(self, filename):
+        from nugridpy.nu_plots import network
+        path = os.path.join(self.DATA_DIR, filename)
+        return network.parse_ppn_physics_input(path, self.ELEMENTS_NAMES)
+
+    def test_diff_physics_input_reac_off(self):
+        from nugridpy.nu_plots import network_audit
+        iso_a, reac_a = self._parse('test_0_ppn_physics.input')
+        iso_b, reac_b = self._parse('test_vital_reac_off_ppn_physics.input')
+        diff = network_audit.diff_physics_input(iso_a, reac_a, iso_b, reac_b)
+
+        self.assertEqual(diff['isotopes_turned_off'], [])
+        self.assertEqual(diff['isotopes_turned_on'], [])
+        self.assertEqual(len(diff['reactions_turned_off']), 63)
+        self.assertEqual(diff['reactions_turned_on'], [])
+
+    def test_diff_physics_input_iso_reac_off(self):
+        from nugridpy.nu_plots import network_audit
+        iso_a, reac_a = self._parse('test_0_ppn_physics.input')
+        iso_b, reac_b = self._parse('test_vital_iso_reac_off_ppn_physics.input')
+        diff = network_audit.diff_physics_input(iso_a, reac_a, iso_b, reac_b)
+
+        self.assertEqual(len(diff['isotopes_turned_off']), 47)
+        self.assertEqual(len(diff['reactions_turned_off']), 63)
+
+    def test_diff_physics_input_iso_all_is_identical_to_baseline(self):
+        from nugridpy.nu_plots import network_audit
+        iso_a, reac_a = self._parse('test_0_ppn_physics.input')
+        iso_b, reac_b = self._parse('test_iso_all_ppn_physics.input')
+        diff = network_audit.diff_physics_input(iso_a, reac_a, iso_b, reac_b)
+
+        self.assertEqual(diff, {
+            'isotopes_turned_off': [], 'isotopes_turned_on': [],
+            'reactions_turned_off': [], 'reactions_turned_on': [],
+        })
+
+    def test_check_physics_input_consistency_on_real_configs(self):
+        # None of the 4 real configs actually hit the "active reaction
+        # references an inactive isotope" case (test_vital_reac_off
+        # turns off reactions while leaving isotopes on -- the safe
+        # direction) -- confirms the check doesn't false-positive on
+        # real, if unusual, configurations.
+        from nugridpy.nu_plots import network_audit
+        for filename in ('test_0_ppn_physics.input', 'test_iso_all_ppn_physics.input',
+                          'test_vital_reac_off_ppn_physics.input',
+                          'test_vital_iso_reac_off_ppn_physics.input'):
+            isotopes, reactions = self._parse(filename)
+            problems = network_audit.check_physics_input_consistency(isotopes, reactions)
+            self.assertEqual(problems, [], msg='unexpected problem in {}'.format(filename))
+
+    def test_check_physics_input_consistency_detects_synthetic_problem(self):
+        from nugridpy.nu_plots import network
+        isotopes, reactions = self._parse('test_0_ppn_physics.input')
+        # Deliberately flip one isotope referenced by an active
+        # reaction to inactive, reproducing the exact case vital.F90
+        # warns about but that none of the real bundled configs hit.
+        h2 = next(i for i in isotopes if i.name == 'H   2')
+        broken_isotopes = [
+            i._replace(active=False) if i.index == h2.index else i
+            for i in isotopes
+        ]
+        from nugridpy.nu_plots import network_audit
+        problems = network_audit.check_physics_input_consistency(broken_isotopes, reactions)
+        self.assertTrue(any(p['isotope_name'] == 'H   2' for p in problems))
+
+    def test_check_isotope_coverage(self):
+        from nugridpy.nu_plots import network, network_audit
+        _, reactions = self._parse('test_0_ppn_physics.input')
+        database_path = os.path.join(self.DATA_DIR, 'isotopedatabase_excerpt.txt')
+        database = network.parse_isotopedatabase(database_path)
+
+        coverage = network_audit.check_isotope_coverage(reactions, database)
+        # The excerpt only covers the first 100 rows (up to ~Ca) of the
+        # real ~1100-isotope database, so heavier species referenced by
+        # the real reaction table (e.g. Pb, Bi) are expected to show up
+        # as "missing" here -- this excerpt is deliberately partial.
+        self.assertIsInstance(coverage['referenced_but_missing'], set)
+        self.assertIsInstance(coverage['unreferenced_in_database'], set)
+
+    def test_check_network_collapse_flags_real_collapsed_run(self):
+        # Checked against the *baseline's* expected isotopes, not the
+        # collapsed run's own config -- test_vital_iso_reac_off's own
+        # ppn_physics.input claims nothing should be active, so
+        # checking against itself would trivially find nothing
+        # "missing" and completely miss the real failure.
+        from nugridpy.nu_plots import network_audit
+        from nugridpy import ppn
+        baseline_isotopes, _ = self._parse('test_0_ppn_physics.input')
+        p = ppn.abu_vector(self.DATA_DIR, filenames='collapsed_iso_massf')
+        cycle = int(p.get('mod')[-1])
+
+        problems = network_audit.check_network_collapse(p, cycle, baseline_isotopes)
+        self.assertIn('missing_isotopes', problems)
+        self.assertIn('PROT', problems['missing_isotopes'])
+        self.assertIn('floor_fraction', problems)
+
+    def test_check_network_collapse_clean_on_healthy_run(self):
+        from nugridpy.nu_plots import network_audit
+        from nugridpy import ppn
+        baseline_isotopes, _ = self._parse('test_0_ppn_physics.input')
+        p = ppn.abu_vector(self.DATA_DIR, filenames='healthy_iso_massf')
+        cycle = int(p.get('mod')[-1])
+
+        problems = network_audit.check_network_collapse(p, cycle, baseline_isotopes)
+        self.assertEqual(problems, {})
+
+    def test_fingerprint_files_reproduces_database_contamination_finding(self):
+        import shutil
+        from nugridpy.nu_plots import network_audit
+        with TemporaryDirectory() as tdir:
+            for name in ('test_0', 'test_iso_all', 'test_vital_reac_off',
+                         'test_vital_iso_reac_off'):
+                run_dir = os.path.join(tdir, name)
+                os.mkdir(run_dir)
+                shutil.copy(
+                    os.path.join(self.DATA_DIR, '{}_ppn_physics.input'.format(name)),
+                    os.path.join(run_dir, 'ppn_physics.input'),
+                )
+            fp_0 = network_audit.fingerprint_files(os.path.join(tdir, 'test_0'),
+                                                     filenames=('ppn_physics.input',))
+            fp_reac_off = network_audit.fingerprint_files(
+                os.path.join(tdir, 'test_vital_reac_off'), filenames=('ppn_physics.input',))
+            self.assertNotEqual(fp_0['ppn_physics.input'], fp_reac_off['ppn_physics.input'])
+
+        # Missing file is omitted, not raised.
+        with TemporaryDirectory() as tdir:
+            empty = network_audit.fingerprint_files(tdir)
+            self.assertEqual(empty, {})
 
 
 class TestSensitivity(unittest.TestCase):

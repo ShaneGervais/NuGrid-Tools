@@ -9,15 +9,21 @@
 nu_plots.network
 
 Parses NuPPN's `networksetup.txt` (the reaction-network table a ppn/
-mppnp run writes to its run directory) into structured reaction
-records, to answer:
+mppnp run writes to its run directory), `ppn_physics.input` (the
+isotope/reaction on-off input a run reads), and `isotopedatabase.txt`
+into structured records, to answer:
 
 - what reactions are in the network as a whole
 - what reactions structurally affect a given isotope
+- what a run's actual input configuration turned on/off
 
 This is data introspection, not plotting -- it lives in `nu_plots`
 because it's still nucleosynthesis-network-specific, parallel to how
 `mesa_plots` holds MESA-specific code, not because it draws figures.
+Higher-level consistency checks/diffs built on top of these parsers
+(is this configuration internally consistent, did a run's output
+collapse, do two configs actually differ the way they're supposed to)
+live in the separate `nu_plots.network_audit` module.
 
 Deliberately not included: correlating `flux_NNNNN.DAT` rows (a
 cycle's reaction fluxes, already read by
@@ -50,6 +56,36 @@ _REACTION_RE = re.compile(
     r"^\s*(\d+)\s+([TF])\s+(\d+)\s+(.{5})\s+\+\s+(\d+)\s+(.{5})"
     r"\s+->\s+(\d+)\s+(.{5})\s+\+\s+(\d+)\s+(.{5})\s+\S+\s+(\S+)\s+(\S+)\s+\d+"
 )
+
+PhysicsInputIsotope = namedtuple('PhysicsInputIsotope', [
+    'index', 'name', 'a', 'z', 'active', 'halflife', 'halflife_unit',
+])
+PhysicsInputReaction = namedtuple('PhysicsInputReaction', [
+    'index', 'active', 'reactant', 'projectile', 'product1', 'product2',
+    'q_value', 'source', 'reaction_type',
+])
+
+# Matches one ppn_physics.input isotope-table line, e.g.:
+#       6 BE  7   7.  4. T  5.329d+01 d
+# Species name captured non-greedily up to the "A. Z." numeric pair --
+# validated against every isotope row in 4 real ppn_physics.input
+# files (no false matches against reaction-table rows, which don't
+# have this A./Z./flag shape at all).
+_PHYSICS_INPUT_ISOTOPE_RE = re.compile(
+    r"^\s*(\d+)\s+(.+?)\s+(-?\d+)\.\s+(-?\d+)\.\s+([TF])\s+(\S+)\s+(\S+)\s*$"
+)
+
+# Matches one ppn_physics.input reaction-table line, e.g.:
+#       1 T  2 PROT    0 OOOOO  0 OOOOO   1 H   2     1.179   VITAL  (p,g)   5   1.000E+00
+# Same count+5-char-species-name shape as networksetup.txt's
+# _REACTION_RE, but this table has no literal '+'/'->' separators and
+# puts the T/F flag right after the index instead of at the end.
+_PHYSICS_INPUT_REACTION_RE = re.compile(
+    r"^\s*(\d+)\s+([TF])\s+(\d+)\s+(.{5})\s+(\d+)\s+(.{5})"
+    r"\s+(\d+)\s+(.{5})\s+(\d+)\s+(.{5})\s+(\S+)\s+(\S+)\s+(\S+)\s+\d+\s+\S+\s*$"
+)
+
+DatabaseIsotope = namedtuple('DatabaseIsotope', ['z', 'a', 'name', 'stable_a', 'active'])
 
 _SPECIAL_SPECIES = {
     'PROT': (1, 1),
@@ -121,6 +157,113 @@ def parse_networksetup(path, elements_names):
                 reaction_type=rtype,
             ))
     return reactions
+
+
+def parse_ppn_physics_input(path, elements_names):
+    '''
+    Parse a ppn_physics.input file's isotope and reaction tables.
+
+    Unlike networksetup.txt (a compiled *output* snapshot of the
+    network), this is the actual *input* a ppn/mppnp run reads: each
+    isotope and each reaction carries its own independent T/F
+    "considered" flag here, and NuPPN's own source
+    (`physics/source/vital.F90`) only checks -- and only warns,
+    non-fatally -- that an active reaction's isotopes are also active;
+    it doesn't otherwise validate this file.
+
+    Isotope and reaction rows are told apart by shape, not by file
+    position (an isotope row's second field is a name; a reaction
+    row's second field is the T/F flag itself) -- validated against
+    every row of 4 real ppn_physics.input files with zero ambiguous or
+    unmatched non-comment/non-namelist lines.
+
+    Parameters
+    ----------
+    path : string
+        Path to a ppn_physics.input file.
+    elements_names : list
+        As in `parse_networksetup` -- used to resolve reaction-table
+        species names to Z.
+
+    Returns
+    -------
+    (isotopes, reactions) : (list of PhysicsInputIsotope, list of PhysicsInputReaction)
+    '''
+    symbol_to_z = _symbol_to_z(elements_names)
+    isotopes = []
+    reactions = []
+    with open(path, 'r') as f:
+        for line in f:
+            m = _PHYSICS_INPUT_REACTION_RE.match(line)
+            if m:
+                (index, active, rcount, rname, pcount, pname,
+                 p1count, p1name, p2count, p2name,
+                 q_value, source, rtype) = m.groups()
+                reactions.append(PhysicsInputReaction(
+                    index=int(index),
+                    active=(active == 'T'),
+                    reactant=_parse_species(rname, int(rcount), symbol_to_z),
+                    projectile=_parse_species(pname, int(pcount), symbol_to_z),
+                    product1=_parse_species(p1name, int(p1count), symbol_to_z),
+                    product2=_parse_species(p2name, int(p2count), symbol_to_z),
+                    q_value=float(q_value),
+                    source=source,
+                    reaction_type=rtype,
+                ))
+                continue
+            m = _PHYSICS_INPUT_ISOTOPE_RE.match(line)
+            if m:
+                index, name, a, z, active, halflife, halflife_unit = m.groups()
+                isotopes.append(PhysicsInputIsotope(
+                    index=int(index),
+                    name=name.strip(),
+                    a=int(a),
+                    z=int(z),
+                    active=(active == 'T'),
+                    # Kept as the raw Fortran-formatted string (e.g.
+                    # '5.329d+01', 'd' exponent, not 'e') rather than a
+                    # float -- nothing in this module needs it
+                    # numerically yet.
+                    halflife=halflife,
+                    halflife_unit=halflife_unit,
+                ))
+    return isotopes, reactions
+
+
+def parse_isotopedatabase(path):
+    '''
+    Parse an isotopedatabase.txt file.
+
+    Simple whitespace-delimited format: Z, A, element symbol, the
+    stable reference mass number for that element (not this row's own
+    A), and a T/F "considered" flag. Deliberately a standalone parser
+    here rather than reusing `utils.Utils._read_isotopedatabase`, which
+    is private, NumPy-array-coupled, and built for a different purpose
+    (decay-index bookkeeping).
+
+    Parameters
+    ----------
+    path : string
+        Path to an isotopedatabase.txt file.
+
+    Returns
+    -------
+    list of DatabaseIsotope.
+    '''
+    isotopes = []
+    with open(path, 'r') as f:
+        for line in f:
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            parts = line.split()
+            if len(parts) != 5:
+                continue
+            z, a, name, stable_a, active = parts
+            isotopes.append(DatabaseIsotope(
+                z=int(z), a=int(a), name=name, stable_a=int(stable_a),
+                active=(active == 'T'),
+            ))
+    return isotopes
 
 
 def reactions_in_network(reactions, active_only=True):
